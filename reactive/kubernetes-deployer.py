@@ -19,7 +19,7 @@ def launch(relation):
         for container_request in container_requests:
             unit = container_request['unit'].split('/')[0]
             unit_list.append(container_request['unit'])
-        if unit != "":
+        if unit:
             deployment_context = {
                 'name': unit + '-deployment',
                 'replicas': len(container_requests),
@@ -215,7 +215,7 @@ def create_secret(container):
                     '--docker-server=' + container['docker-registry'],
                     '--docker-username=' + container['username'],
                     '--docker-password=' + container['password'],
-                    '--docker-email=' + container['docker-email']])
+                    '--docker-email=bogus@examplebogus.be'])
     except CalledProcessError:
         return ''
     return unit + 'secret'
@@ -230,7 +230,7 @@ def is_secret_image(container):
     Returns:
         True, if not all information is present
     """
-    required_fields = ['username', 'password', 'docker-registry', 'docker-email']
+    required_fields = ['username', 'password', 'docker-registry']
     for field in required_fields:
         if field not in container or bool(container[field].isspace()):
             return False
