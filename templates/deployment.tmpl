@@ -1,0 +1,35 @@
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: {{name}}
+spec:
+  replicas: {{replicas}}
+  selector:
+    matchLabels:
+      pod-is-for: {{uname}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  revisionHistoryLimit: 1
+  template:
+    metadata:
+      labels:
+        pod-is-for: {{uname}}
+    spec:
+      containers:
+      - name: {{uname}}
+        image: {{image}}
+        imagePullPolicy: Always
+{%- if env_vars %}
+        env:
+{%- for key, value in env_vars.items() %}
+        - name: {{key}}
+          value: {{value}}
+{%- endfor %}
+{%- endif %}
+{%- if imagesecret %}
+      imagePullSecrets:
+        - name: {{imagesecret}}
+{%- endif %}

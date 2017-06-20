@@ -1,0 +1,18 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: {{name}}
+  labels:
+    pod-is-for: {{uname}}
+spec:
+  type: NodePort
+  selector:
+    pod-is-for: {{uname}}
+  ports:
+{%- for port_info in ports %}
+{%- for port, port_name in port_info.items() %}
+    - name: {{port_name}}
+      protocol: TCP
+      port: {{port}}
+{%- endfor %}
+{%- endfor %}

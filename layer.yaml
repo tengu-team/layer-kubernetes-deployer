@@ -1,0 +1,16 @@
+includes: ['layer:basic', 'interface:docker-image-host']
+defines:
+  users:
+    kubedeployer:
+      groups: ['kubedeployer']
+  dirs:
+    deployments:
+      path: "/home/kubedeployer/.config/kubedeployer/deployments"
+      perms: 0755
+      owner: "kubedeployer"
+      group: "kubedeployer"
+    services:
+      path: "/home/kubedeployer/.config/kubedeployer/services"
+      perms: 0755
+      owner: "kubedeployer"
+      group: "kubedeployer"
