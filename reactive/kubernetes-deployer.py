@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import json
+import random
 from subprocess import call, check_output, check_call, CalledProcessError
 from charms.reactive import when, when_not, remove_state, set_state
 from charmhelpers.core.hookenv import log, is_leader, status_set
@@ -27,6 +28,10 @@ def launch(relation):
                 'image': container_request.get('image'),
                 'env_vars': {'units': ' '.join(unit_list)}
             }
+            # Add env vars if needed
+            if 'env' in container_request:
+                deployment_context['env_vars'] = {**deployment_context['env_vars'],
+                                                  **container_request['env']}
             # Create secret if needed
             if is_secret_image(container_request):
                 secret_name = get_secret(container_request)
@@ -56,18 +61,19 @@ def launch(relation):
             # Check if deployed pods are ready
             errors = unitdata.kv().get('deployer-errors', {})
             if not check_pods(unit):
-                errors[unit] = 'Error'  # Replace by actual error
-                unitdata.kv().set('deployer-errors', errors)
-                set_state('kubernetes-deployer.error')
-                return
+                error_msg = get_pod_error_message(unit)
+                if error_msg:
+                    errors[unit] = error_msg
+                    unitdata.kv().set('deployer-errors', errors)
+                    set_state('kubernetes-deployer.error')
+                    return
             errors.pop(unit, None)
             unitdata.kv().set('deployer-errors', errors)
             # Return running container info
-            if 'ports' in container_request:
-                running = get_running_containers(unit)
-                for u in unit_list:
-                    running_containers[u] = running
-                relation.send_running_containers(running_containers)
+            running = get_running_containers(unit)
+            for u in unit_list:
+                running_containers[u] = running
+            relation.send_running_containers(running_containers)
             status_set('active', 'Kubernetes master running')
 
 
@@ -80,6 +86,7 @@ def remove_images(relation):
         unit = container_request['unit'].split('/')[0]
     remove_deployment(unit)
     remove_state('docker-image-host.broken')
+    status_set('active', 'Kubernetes master running')
 
 
 @when('kubernetes-deployer.error')
@@ -87,8 +94,8 @@ def report_errors():
     errors = unitdata.kv().get('deployer-errors')
     error_message = 'Error deploying the following application(s):'
     for key in errors:
-        error_message += '\n' + key
-    status_set('blocked', error_message)
+        error_message += '\n' + key + ' --> ' + json.dumps(errors[key])
+    status_set('active', error_message)
     remove_state('kubernetes-deployer.error')
 
 
@@ -127,7 +134,8 @@ def remove_deployment(unit):
 
 
 def get_running_containers(unit):
-    ''' Returns service host and port information about a service.json
+    ''' Returns service host and port information about a unit deployment.
+    Returns only a worker host if no service exists.
 
     Args:
         unit (str): unit
@@ -139,32 +147,36 @@ def get_running_containers(unit):
                          }
              }
     '''
-    service_info = check_output(['kubectl',
-                                 'get',
-                                 'service',
-                                 unit + '-service',
-                                 '-o',
-                                 'json']).decode('utf-8')
-    service = json.loads(service_info)
-    ports = {}
-    for port in service['spec']['ports']:
-        ports[port['port']] = port['nodePort']
-    return {
-        'host': get_random_node_ip(),
-        'ports': ports
-    }
+    config = {'host': get_random_node_ip()}
+    try:
+        service_info = check_output(['kubectl',
+                                     'get',
+                                     'service',
+                                     unit + '-service',
+                                     '-o',
+                                     'json']).decode('utf-8')
+        service = json.loads(service_info)
+        ports = {}
+        for port in service['spec']['ports']:
+            ports[port['port']] = port['nodePort']
+        config['ports'] = ports
+    except CalledProcessError:
+        pass
+    return config
 
 
 def get_random_node_ip():
     """Returns a random kubernetes-worker node address.
        Can be an ip adress or hostname
     """
-    return check_output(['kubectl',
+    nodes = check_output(['kubectl',
                          'get',
                          'nodes',
                          '-o',
-                         'jsonpath="{.items[0].status.addresses[0].address}"'
+                         'jsonpath="{.items[0].status.addresses[*].address}"'
                          ]).decode('utf-8')
+    nodes = nodes.replace('"', '')
+    return random.choise(nodes.split(' '))
 
 
 def service_exists(service):
@@ -262,7 +274,7 @@ def get_secret(container):
 
 
 def check_pods(unit):
-    """Checks if all pods are running.
+    """Checks if all pods from a service are running.
 
     Args:
         unit (str): unit
@@ -280,3 +292,27 @@ def check_pods(unit):
         if pod == 'false':
             return False
     return True
+
+
+def get_pod_error_message(unit):
+    """Return the first encountered error state of a pod within a service.
+
+    Args:
+        unit (str): unit
+    Returns:
+        None | dict
+
+    """
+    deployment_status = json.loads(check_output(['kubectl',
+                                                 'get',
+                                                 'pods',
+                                                 '--selector=pod-is-for=' + unit,
+                                                 '-o',
+                                                 'json'
+                                                 ]).decode('utf-8'))
+    if deployment_status:
+        for item in deployment_status['items']:
+            for status in item['status']['containerStatuses']:
+                if status['ready'] is False:
+                    return status['state']
+    return None

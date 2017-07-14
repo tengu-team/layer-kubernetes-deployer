@@ -1,5 +1,5 @@
 # Layer-kubernetes-deployer
-This layer serves as an extra layer for the [kubernetes-master](https://jujucharms.com/u/containers/kubernetes-master/) charm. It deployes docker images which are wrapped in the [docker-image](https://github.com/tengu-team/layer-docker-image) layer.
+This layer serves as an extra layer for the [kubernetes-master](https://jujucharms.com/u/containers/kubernetes-master/) charm. It deploys docker images which are wrapped in the [docker-image](https://github.com/tengu-team/layer-docker-image) layer.
 
 ## Building the layer
 Using this layer requires some modifications to the [kubernetes-master](https://jujucharms.com/u/containers/kubernetes-master/) layer. First download the layer from the [Github repository](https://github.com/kubernetes/kubernetes/tree/master/cluster/juju/layers/kubernetes-master). Then modify the `layer.yaml` to include the kubernetes-deployer layer. Rebuild the charm and setup your custom Kubernetes cluster.
@@ -25,7 +25,6 @@ Using private images requires the following config values to be set (in the dock
 - username
 - password
 - docker-registry
-- docker-email
 
 
 ## Authors
