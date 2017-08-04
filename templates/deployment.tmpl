@@ -2,21 +2,24 @@ apiVersion: apps/v1beta1
 kind: Deployment
 metadata:
   name: {{name}}
+  namespace: {{namespace}}
 spec:
   replicas: {{replicas}}
   selector:
     matchLabels:
-      pod-is-for: {{uname}}
+      {{selector}}: {{uname}}
+{%- if rolling == true %}
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 1
+{%- endif %}
   revisionHistoryLimit: 1
   template:
     metadata:
       labels:
-        pod-is-for: {{uname}}
+        {{selector}}: {{uname}}
     spec:
       containers:
       - name: {{uname}}
@@ -24,9 +27,9 @@ spec:
         imagePullPolicy: Always
 {%- if env_vars %}
         env:
-{%- for key, value in env_vars.items() %}
+{%- for key in env_order %}
         - name: {{key}}
-          value: {{value}}
+          value: "{{env_vars[key]}}"
 {%- endfor %}
 {%- endif %}
 {%- if imagesecret %}

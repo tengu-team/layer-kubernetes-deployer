@@ -6,3 +6,9 @@ description: |
 provides:
   docker-image-host:
     interface: docker-image-host
+requires:
+  kube-host:
+    interface: http
+    scope: container
+subordinate: true
+series: ['xenial']

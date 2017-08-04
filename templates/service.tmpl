@@ -2,12 +2,13 @@ kind: Service
 apiVersion: v1
 metadata:
   name: {{name}}
+  namespace: {{namespace}}
   labels:
-    pod-is-for: {{uname}}
+    {{selector}}: {{uname}}
 spec:
   type: NodePort
   selector:
-    pod-is-for: {{uname}}
+    {{selector}}: {{uname}}
   ports:
 {%- for port_info in ports %}
 {%- for port, port_name in port_info.items() %}
