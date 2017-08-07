@@ -57,14 +57,19 @@ def launch(relation, kube):
             application_names.add(unit)
             application_units[unit].append(container_request['unit'])
         namespace = config.get('namespace', 'default')
-        update_namespace(os.environ['JUJU_UNIT_NAME'])
+        update_namespace(application_names)
         for app in application_names:
+            # Find container_request for app
+            for cr in container_requests:
+                if app in cr['unit'].split('/')[0]:
+                    container_request = cr
             # Create the deployment
             launch_deployment(container_request, len(application_units[app]), application_units[app], namespace)
             # Check if a service is needed, create if needed
             launch_service(container_request, namespace)
-            # Tell k8s to create resources
-            create_resources()
+        # Tell k8s to create resources
+        create_resources()
+        for app in application_names:
             # Check if deployed pods are ready
             errors = unitdata.kv().get('deployer-errors', {})
             if not check_pods(app, namespace):
@@ -73,14 +78,14 @@ def launch(relation, kube):
                     errors[app] = error_msg
                     unitdata.kv().set('deployer-errors', errors)
                     set_state('kubernetes-deployer.error')
-                    return
+                    continue
             errors.pop(app, None)
             unitdata.kv().set('deployer-errors', errors)
             # Return running container info
             running_containers[app] = get_running_containers(app, namespace)
         relation.send_running_containers(running_containers)
         remove_old_deployments(application_names, namespace)
-        status_set('active', 'Kubernetes master running')
+        status_set('active', 'ready')
         set_state('kubernetes-deployer.cleanup')
 
 
@@ -192,22 +197,22 @@ def launch_service(container_request, namespace):
                context=service_context)
 
 
-def update_namespace(unit):
+def update_namespace(app_names):
     """Create and/or update the namespace configured for this deployer.
     
     Args:
-        unit (str): juju unit name of the deployer
+        app_names (set): all unique app names used in resource labels
     """
     config = hookenv.config()
+    if config.changed('namespace'):
+        for app in app_names:
+            resources = ['deployments', 'services', 'secrets']
+            for resource in resources:
+                delete_resource_label(resource, selector + '=' + app, config.previous('namespace'))
     # Create namespace if needed
     namespace = config.get('namespace', 'default')
     if not namespace_exists(namespace):
         create_namespace(namespace)
-        # Check if new namespace
-        if config.changed('namespace'):
-            resources = ['deployments', 'services', 'secrets']
-            for resource in resources:
-                delete_resource_label(resource, selector + '=' + unit, config.previous('namespace'))
 
 
 def create_resources():
