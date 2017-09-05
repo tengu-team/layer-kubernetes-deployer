@@ -28,7 +28,7 @@ juju remove-unit limeds/2 # Remove a limeds pod
 - `rolling-updates`: Kubernetes update strategy ([info](https://kubernetes.io/docs/tutorials/kubernetes-basics/update-intro/)).
 
 ## Important Notes
-- Namespaces which do not have any pods will be removed.
+- Namespaces which do not have any resources will be removed.
 
 
 

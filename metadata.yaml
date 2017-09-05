@@ -6,6 +6,8 @@ description: |
 provides:
   docker-image-host:
     interface: docker-image-host
+  kubernetes-deployer:
+    interface: kubernetes-deployer
 requires:
   kube-host:
     interface: http

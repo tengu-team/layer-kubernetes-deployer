@@ -1,5 +1,6 @@
 includes: ['layer:basic',
            'interface:docker-image-host',
+           'interface:kubernetes-deployer',
            'interface:http']
 defines:
   users:

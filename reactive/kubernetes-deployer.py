@@ -1,33 +1,18 @@
 #!/usr/bin/env python3
 import os
-import json
-import random
+import shutil
 from collections import defaultdict
-from subprocess import call, check_output, check_call, CalledProcessError
-from charms.reactive import when, when_not, remove_state, set_state
+from charms.reactive import when, when_not, remove_state, set_state, when_not_all
 from charmhelpers.core.hookenv import log, is_leader, status_set
-from charmhelpers.core.templating import render
 from charmhelpers.core import unitdata, hookenv
+from charms.layer.resourcefactory import ResourceFactory
+from charms.layer.k8shelpers import get_running_containers, delete_resources_by_label, get_label_values_per_deployer
+
 
 # Add kubectl to PATH
 os.environ['PATH'] += os.pathsep + os.path.join(os.sep, 'snap', 'bin')
-# Deployer config files path
-deployer_path = '/home/kubedeployer/.config/kubedeployers'
-deployer_configs = deployer_path + '/' + os.environ['JUJU_UNIT_NAME'].replace('/', '-')
-# Label selector
-selector = 'resource-for'
-
-
-@when_not('deployer.installed')
-def install_deployer():
-    log('Setting up deployer dirs in: ' + deployer_configs)
-    if not os.path.exists('/home/kubedeployer/.config/kubedeployers/namespaces'):
-        os.makedirs('/home/kubedeployer/.config/kubedeployers/namespaces')
-    dirs = ['deployments', 'services', 'secrets']
-    for d in dirs:
-        if not os.path.exists(deployer_configs + '/' + d):
-            os.makedirs(deployer_configs + '/' + d)
-    set_state('deployer.installed')
+config = hookenv.config()
+deployer = os.environ['JUJU_UNIT_NAME'].split('/')[0]
 
 
 @when_not('kube-host.available')
@@ -41,211 +26,163 @@ def set_active(kube):
     status_set('active', 'Ready')
 
 
+@when_not('deployer.installed')
+def install_deployer():
+    # General deployer options
+    deployers_path = '/home/kubedeployer/.config/kubedeployers'
+    deployer_path = deployers_path + '/' + os.environ['JUJU_UNIT_NAME'].replace('/', '-')
+    juju_app_selector = 'juju-app'
+    deployer_selector = 'deployer'
+    # Save then in the kv store
+    unitdata.kv().set('deployers_path', deployers_path)
+    unitdata.kv().set('deployer_path', deployer_path)
+    unitdata.kv().set('juju_app_selector', juju_app_selector)
+    unitdata.kv().set('deployer_selector', deployer_selector)
+    # Setup dir structure
+    log('Setting up deployer dirs in: ' + deployer_path)
+    if not os.path.exists('/home/kubedeployer/.config/kubedeployers/namespaces'):
+        os.makedirs('/home/kubedeployer/.config/kubedeployers/namespaces')
+    dirs = ['deployments', 'services', 'secrets', 'headless-services']
+    for d in dirs:
+        if not os.path.exists(deployer_path + '/' + d):
+            os.makedirs(deployer_path + '/' + d)
+    set_state('deployer.installed')
+
+
+@when('kubernetes-deployer.available', 'kube-host.available')
+def create_resources(relation, kube):
+    # Check if this is the leader
+    if not is_leader():
+        return
+    # Ensure namespace exists
+    configure_namespace()
+    # Check headless service requests
+    headless_service_requests = relation.headless_service_requests
+    headless_services_running = {}  # Contains all headless services info
+    if headless_service_requests:
+        clean_deployer_config(['headless-services'])
+        headless_services_running = configure_headless_services(headless_service_requests)
+    # Return all created services
+    relation.send_services(headless_services_running)
+    status_set('active', 'Ready')
+    set_state('resources.created')
+
+
 @when('docker-image-host.available', 'kube-host.available')
 def launch(relation, kube):
-    if is_leader():
-        config = hookenv.config()
-        container_requests = relation.container_requests
-        if not container_requests:
-            return
-        log(container_requests)
-        running_containers = {}
-        application_units = defaultdict(list)
-        application_names = set()  # Set with all distinct application names
-        for container_request in container_requests:
-            unit = container_request['unit'].split('/')[0]
-            application_names.add(unit)
-            application_units[unit].append(container_request['unit'])
-        namespace = config.get('namespace', 'default')
-        update_namespace(application_names)
-        for app in application_names:
-            # Find container_request for app
-            for cr in container_requests:
-                if app in cr['unit'].split('/')[0]:
-                    container_request = cr
-            # Create the deployment
-            launch_deployment(container_request, len(application_units[app]), application_units[app], namespace)
-            # Check if a service is needed, create if needed
-            launch_service(container_request, namespace)
-        # Tell k8s to create resources
-        create_resources()
-        for app in application_names:
-            # Check if deployed pods are ready
-            errors = unitdata.kv().get('deployer-errors', {})
-            if not check_pods(app, namespace):
-                error_msg = get_pod_error_message(app, namespace)
-                if error_msg:
-                    errors[app] = error_msg
-                    unitdata.kv().set('deployer-errors', errors)
-                    set_state('kubernetes-deployer.error')
-                    continue
-            errors.pop(app, None)
-            unitdata.kv().set('deployer-errors', errors)
-            # Return running container info
-            running_containers[app] = get_running_containers(app, namespace)
-        relation.send_running_containers(running_containers)
-        remove_old_deployments(application_names, namespace)
-        status_set('active', 'ready')
-        set_state('kubernetes-deployer.cleanup')
-
-
-@when('kubernetes-deployer.cleanup')
-def cleanup():
-    log('Remove unused namespaces')
-    namespaces = json.loads(check_output(['kubectl',
-                                          'get',
-                                          'namespaces',
-                                          '--selector=created-by=deployer',
-                                          '-o',
-                                          'json']).decode('utf-8'))
-    for ns in namespaces['items']:
-        delete_namespace(ns['metadata']['name'])
-
-
-@when('docker-image-host.broken')
-@when_not('docker-image-host.available')
-def remove_images(relation):
+    # Received at least one container request
+    # First check if this is the leader
+    if not is_leader():
+        return
+    # Make sure the namespace exists
+    configure_namespace()
+    # Delete all config files from this deployer
+    clean_deployer_config()
+    # Create all config files from container_requests
+    application_units = defaultdict(list)  # dict with unit names per application
+    application_names = {}  # Dict with all applications with their request
     container_requests = relation.container_requests
-    namespace = hookenv.config().get('namespace', 'default')
-    log(container_requests)
     for container_request in container_requests:
         unit = container_request['unit'].split('/')[0]
-    remove_deployment(unit, namespace)
-    if namespace is not 'default':
-        delete_namespace(namespace)
-    resources = [name for name in os.listdir(deployer_configs) if os.path.isdir(deployer_configs + '/' + name)]
+        application_names[unit] = container_request
+        application_units[unit].append(container_request['unit'])
+    # Per app create resource files
+    service_names = {}  # Save all service names so we can query them later
+    for app, request in application_names.items():
+        # Create secrets
+        secret = configure_secret(app, request, application_names)
+        # Create deployments files
+        deployment = configure_deployment(app, request, application_units[app], secret)
+        # Create services files
+        service = configure_service(app, request)
+        if service:
+            service_names[service.name()] = app
+        else:
+            service_names[app] = app  # prettify?
+        # Create resources
+        deployment.create_resource()  # Will implicitly call apply all resources
+    relation.send_running_containers(get_running_info(service_names))
+    used_apps = unitdata.kv().get('used_apps', [])
+    unitdata.kv().set('used_apps', list(set(used_apps) | application_names.keys()))
+    status_set('active', 'Ready')
+    set_state('deployments.created')
+
+
+"""
+CLEANUP STATES
+"""
+
+'''
+@when_not('kubernetes-deployer.available')
+def ensure_cleanup_state_kube_deployer():
+    set_state('resources.created')
+
+
+@when_not('docker-image-host.available')
+def ensure_cleanup_state_docker_host():
+    set_state('deployments.created')
+'''
+
+
+@when_not_all('kubernetes-deployer.available', 'docker-image-host.available')
+def ensure_cleanup():
+    set_state('resources.created')
+    set_state('deployments.created')
+
+
+@when('deployments.created', 'resources.created', 'kube-host.available')
+def cleanup(kube):
+    # Iterate over all resources with label from this deployer
+    # Remove all which are not needed anymore
+    needed_apps = unitdata.kv().get('used_apps', [])
+    all_apps = get_label_values_per_deployer(config.get('namespace').rstrip(),
+                                             unitdata.kv().get('juju_app_selector'),
+                                             unitdata.kv().get('deployer_selector') + '=' +
+                                             os.environ['JUJU_UNIT_NAME'].split('/')[0])
+    for app in all_apps:
+        if app not in needed_apps:
+            # Remove resource via label TODO TESTING!!!!!
+            delete_resources_by_label(config.get('namespace').rstrip(),
+                                      ['all'],
+                                      unitdata.kv().get('juju_app_selector') + '=' + app)
+    unitdata.kv().set('used_apps', [])
+
+    if config.previous('namespace'):
+        log('Checking if previous namespace still has resources, if not delete namespace (' +
+            config.previous('namespace') + ')')
+        namespace = ResourceFactory.create_resource('namespace', {'name': config.previous('namespace')})
+        namespace.delete_resource()
+
+    remove_state('resources.created')
+    remove_state('deployments.created')
+
+
+def clean_deployer_config(resources=None):
+    """Remove all resource files from this deployer. If no resources are given,
+    remove deployments, services and secrets
+    """
+    if resources is None:
+        resources = ['deployments', 'services', 'secrets']
     for resource in resources:
-        for the_file in os.listdir(deployer_configs + '/' + resource):
-            file_path = os.path.join(deployer_configs + '/' + resource, the_file)
-            try:
-                if os.path.isfile(file_path):
-                    os.unlink(file_path)
-            except Exception as e:
-                print(e)
-    remove_state('docker-image-host.broken')
-    status_set('active', 'Kubernetes master running')
+        path = unitdata.kv().get('deployer_path') + '/' + resource
+        shutil.rmtree(path)
+        os.mkdir(path)
 
 
-@when('kubernetes-deployer.error')
-def report_errors():
-    errors = unitdata.kv().get('deployer-errors')
-    error_message = 'Error deploying the following application(s):'
-    for key in errors:
-        error_message += '\n' + key + ' --> ' + json.dumps(errors[key])
-    status_set('active', error_message)
-    remove_state('kubernetes-deployer.error')
+def is_secret_image(container):
+    """Checks if all information is available for secret image.
+    If all are present, assume a secret is needed.
 
-
-def launch_deployment(container_request, nr_pods, unit_list, namespace):
-    """Creates a deployment file and generates a docker secret if needed.
-    
     Args:
-        container_request (dict): container_request
-        nr_pods (int): number of pods
-        unit_list (list): list with unit names
-        namespace (str): namespace for deployment
+        container (dict): container_request
+    Returns:
+        True, if all information is present
     """
-    unit = container_request['unit'].split('/')[0]
-    deployment_context = {
-        'name': unit + '-deployment',
-        'replicas': nr_pods,
-        'uname': unit,
-        'image': container_request.get('image'),
-        'namespace': namespace,
-        'rolling': hookenv.config().get('rolling-updates'),
-        'env_vars': {'units': ' '.join(unit_list)},
-        'selector': selector
-    }
-    # Add env vars if needed
-    if 'env' in container_request:
-        deployment_context['env_vars'] = {**deployment_context['env_vars'],
-                                          **container_request['env']}
-        sorted_env_keys = sorted(deployment_context['env_vars'].keys())
-        deployment_context['env_order'] = sorted_env_keys
-    # Create secret if needed
-    if is_secret_image(container_request):
-        secret_name = get_secret(container_request, namespace)
-        if not secret_name:
-            status_set('blocked',
-                       'Secret for ' + unit + ' could not be created')
-            return
-        deployment_context['imagesecret'] = secret_name
-    # Create deployment and service if needed
-    render(source='deployment.tmpl',
-           target=deployer_configs + '/deployments/' + unit + '.yaml',
-           context=deployment_context)
-
-
-def launch_service(container_request, namespace):
-    """Create a service configuration file if a ports config is found.
-    
-    Args:
-        container_request (dict): container_request
-        namespace (str): namespace for service
-    """
-    unit = container_request['unit'].split('/')[0]
-    if 'ports' in container_request and not service_exists(unit + '-service', namespace):
-        service_context = {
-            'name': unit + '-service',
-            'uname': unit,
-            'ports': get_ports_context(container_request),
-            'namespace': namespace,
-            'selector': selector
-        }
-        render(source='service.tmpl',
-               target=deployer_configs + '/services/' + unit + '.yaml',
-               context=service_context)
-
-
-def update_namespace(app_names):
-    """Create and/or update the namespace configured for this deployer.
-    
-    Args:
-        app_names (set): all unique app names used in resource labels
-    """
-    config = hookenv.config()
-    if config.changed('namespace'):
-        for app in app_names:
-            resources = ['deployments', 'services', 'secrets']
-            for resource in resources:
-                delete_resource_label(resource, selector + '=' + app, config.previous('namespace'))
-    # Create namespace if needed
-    namespace = config.get('namespace', 'default')
-    if not namespace_exists(namespace):
-        create_namespace(namespace)
-
-
-def create_resources():
-    """Create Kubernetes resources based on generated config files.
-    """
-    try:
-        call(['kubectl', 'apply', '-R', '-f', deployer_configs + '/'])
-    except CalledProcessError as e:
-        log('Could not create, modify resources')
-        log(e)
-
-
-def remove_old_deployments(app_names, namespace):
-    """Delete config files that are no longer in use.
-    Delete resources that these files represent if they are still active.
-    
-    Args:
-        app_names (set): list with active connected applications
-        namespace (str): namespace to clean up
-    """
-    resources = [name for name in os.listdir(deployer_configs) if os.path.isdir(deployer_configs + '/' + name)]
-    apps_to_delete = set()
-    for resource in resources:
-        for file_name in os.listdir(deployer_configs + '/' + resource):
-            file_no_extension = file_name.rstrip(file_name)
-            if file_no_extension not in app_names:
-                apps_to_delete.add(file_no_extension)
-    for app in apps_to_delete:
-        for resource in resources:
-            delete_resource_label(resource, selector + '=' + app, namespace)
-            path = deployer_configs + '/' + resource + '/' + app + '.yaml'
-            if os.path.exists(path):
-                os.remove(path)
+    required_fields = ['username', 'password', 'docker-registry']
+    for field in required_fields:
+        if field not in container or bool(container[field].isspace()):
+            return False
+    return True
 
 
 def get_ports_context(container):
@@ -266,297 +203,106 @@ def get_ports_context(container):
     return ports
 
 
-def remove_deployment(unit, namespace):
-    """Deletes unit deployment and service.
+def configure_namespace():
+    namespace = ResourceFactory.create_resource('namespace', {'name': config.get('namespace', 'default').rstrip(),
+                                                              'deployer': deployer})
+    namespace.write_resource_file()
+    namespace.create_resource()
+    # Check if config.namespace changed
+    if config.changed('namespace'):
+        # Remove all resources from previous namespace created by this deployer
+        prev_namespace = ResourceFactory.create_resource('namespace',
+                                                         {'name': config.previous('namespace'),
+                                                          'deployer': deployer})
+        prev_namespace.delete_namespace_resources()
 
+
+def configure_secret(app, request, application_names):
+    secret = None
+    # Check if request has secret info
+    if is_secret_image(application_names[app]):
+        secret = ResourceFactory.create_resource('secret', {'username': request['username'],
+                                                            'password': request['password'],
+                                                            'docker-registry': request['docker-registry'],
+                                                            'deployer': deployer,
+                                                            'app': app,
+                                                            'namespace': config.get('namespace', 'default').rstrip()})
+        secret.create_resource()
+    return secret
+
+
+def configure_deployment(app, request, application_units, secret):
+    deployment_request = {
+        'name': app,
+        'replicas': len(application_units),
+        'image': request['image'],
+        'namespace': config.get('namespace').rstrip(),
+        'rolling': config.get('rolling-updates'),
+        'env_vars': {'units': ' '.join(application_units)}
+    }
+    if 'env' in request:
+        deployment_request['env_vars'] = {**deployment_request['env_vars'],
+                                          **request['env']}
+        sorted_env_keys = sorted(deployment_request['env_vars'].keys())  # Sort for the same pod hash
+        deployment_request['env_order'] = sorted_env_keys
+    if secret:
+        deployment_request['secret'] = secret.name()
+    deployment = ResourceFactory.create_resource('deployment', deployment_request)
+    deployment.write_resource_file()
+    return deployment
+
+
+def configure_service(app, request):
+    service = None
+    if 'ports' in request:
+        service_request = {
+            'name': app,
+            'ports': get_ports_context(request),
+            'namespace': config.get('namespace', 'default').rstrip()
+        }
+        service = ResourceFactory.create_resource('service', service_request)
+        service.write_resource_file()
+    return service
+
+
+def get_running_info(service_names):
+    """Returns service info.
+    
     Args:
-        unit (str): concatenation of unit, - and image (replace all / with -)
-        namespace (str): namespace of the deployment
+        service_names (dict): {'service_name': 'app_name'}
+    Returns:
+        See k8shelpers.get_running_containers()
     """
-    service_path = deployer_configs + '/services/' + unit + '.yaml'
-    deployement_path = deployer_configs + '/deployments/' + unit + '.yaml'
-    if os.path.exists(service_path):
-        call(['kubectl',
-              '--namespace', namespace,
-              'delete', '-f', service_path])
-        os.remove(service_path)
-    if os.path.exists(deployement_path):
-        call(['kubectl',
-              '--namespace', namespace,
-              'delete', '-f', deployement_path])
-        os.remove(deployement_path)
+    running_containers = {}
+    namespace = config.get('namespace').rstrip()
+    for service, app in service_names.items():
+        running_containers[app] = get_running_containers(service, namespace)
+    return running_containers
 
 
-def get_running_containers(unit, namespace):
-    """ Returns service host and port information about a unit deployment.
-    Returns only a worker host if no service exists.
-
+def configure_headless_services(requests):
+    """Create requested headless services.
+    
     Args:
-        unit (str): unit
-        namespace (str): namespace of service
-    Returns:
-        dict {
-                'host': '0.0.0.0',
-                'ports': {
-                          '8080': 30000
-                         }
-             }
+        requests (list): list with requests
+    Return:
+        running services (dict)
     """
-    config = {'host': get_random_node_ip()}
-    try:
-        service_info = check_output(['kubectl',
-                                     '--namespace', namespace,
-                                     'get',
-                                     'service',
-                                     unit + '-service',
-                                     '-o',
-                                     'json']).decode('utf-8')
-        service = json.loads(service_info)
-        ports = {}
-        for port in service['spec']['ports']:
-            ports[port['port']] = port['nodePort']
-        config['ports'] = ports
-    except CalledProcessError:
-        pass
-    return config
-
-
-def get_random_node_ip():
-    """Returns a random kubernetes-worker node address.
-       Can be an ip adress or hostname
-
-    Returns:
-        str
-    """
-    nodes = check_output(['kubectl',
-                          'get',
-                          'nodes',
-                          '-o',
-                          'jsonpath="{.items[0].status.addresses[*].address}"'
-                          ]).decode('utf-8')
-    nodes = nodes.replace('"', '')
-    return random.choice(nodes.split(' '))
-
-
-def service_exists(service, namespace):
-    """Check if a service is exists.
-
-    Args:
-        service (str): name of service
-        namespace (str): namespace of the service
-    Returns:
-        True | False
-    """
-    try:
-        check_call(['kubectl',
-                    '--namespace', namespace,
-                    'get', 'service', service])
-    except CalledProcessError:
-        return False
-    return True
-
-
-def secret_exists(secret, namespace):
-    """Check if a secret exists.
-
-    Args:
-        secret (str): name of the secret
-        namespace (str): namespace of the secret
-    Returns:
-        True | False
-    """
-    try:
-        check_call(['kubectl',
-                    '--namespace', namespace,
-                    'get', 'secret', secret])
-    except CalledProcessError:
-        return False
-    return True
-
-
-def namespace_exists(namespace):
-    """Check if a namespace exists.
-
-    Args:
-        namespace (str): name of the namespace
-    Returns:
-         True | False
-    """
-    try:
-        check_call(['kubectl', 'get', 'namespace', namespace])
-    except CalledProcessError:
-        return False
-    return True
-
-
-def create_namespace(namespace):
-    """Create a namespace
-
-    Args:
-        namespace (str): name of the namespace
-    Returns:
-        True | False on success or failure
-    """
-    render(source='namespace.tmpl',
-           target=deployer_path + '/namespaces/' + namespace + '.yaml',
-           context={'namespace': namespace})
-
-    try:
-        check_call(['kubectl',
-                    'create',
-                    '-f',
-                    deployer_path + '/namespaces/' + namespace + '.yaml'])
-    except CalledProcessError:
-        return False
-    return True
-
-
-def delete_namespace(namespace):
-    """Delete a namespace if no pods are running in the namespace
-
-     Args:
-         namespace (str): name of the namespace
-    """
-    if not check_output(['kubectl',
-                         'get',
-                         'pods',
-                         '--namespace',
-                         namespace]):
-        log('No resources found for namespace ' + namespace + ' ... deleting')
-        call(['kubectl', 'delete', 'namespace', namespace])
-        if os.path.exists(deployer_path + '/namespaces/' + namespace + '.yaml'):
-            os.remove(deployer_path + '/namespaces/' + namespace + '.yaml')
-    else:
-        log('Resources found for namespace ' + namespace + ', not deleting')
-
-
-def create_secret(container, namespace):
-    """Creates a secret for a unit.
-
-    Args:
-        container (dict): container_request
-        namespace (str): namespace of secret
-    Returns:
-        Name of the secret
-    """
-    unit = container['unit'].split('/')[0]
-    try:
-        output = check_output(['kubectl',
-                               '--namespace',
-                               namespace,
-                               'create',
-                               'secret',
-                               'docker-registry',
-                               unit + '-secret',
-                               '--docker-server=' + container['docker-registry'],
-                               '--docker-username=' + container['username'],
-                               '--docker-password=' + container['password'],
-                               '--docker-email=bogus@examplebogus.be'])
-        call(['kubectl', '--namespace', namespace, 'label',
-              'secrets', unit + '-secret', selector + '=' + unit])
-    except CalledProcessError:
-        return ''
-    return unit + 'secret'
-
-
-def is_secret_image(container):
-    """Checks if all information is available for secret image.
-    If all are present, assume a secret is needed.
-
-    Args:
-        container (dict): container_request
-    Returns:
-        True, if all information is present
-    """
-    required_fields = ['username', 'password', 'docker-registry']
-    for field in required_fields:
-        if field not in container or bool(container[field].isspace()):
-            return False
-    return True
-
-
-def get_secret(container, namespace):
-    """Checks if unit secret exists.
-    If not, create a new secret.
-    If yes, check if info is updated.
-
-    Args:
-        container (dict): container_request
-        namespace (str): namespace of secret
-    Returns:
-        Name of the secret
-    """
-    unit = container['unit'].split('/')[0]
-    secret_info = {'username': container['username'],
-                   'password': container['password'],
-                   'docker-registry': container['docker-registry']}
-    if secret_exists(unit + '-secret', namespace):
-        if unitdata.kv().get(unit + '-secret') == secret_info:
-            return unit + '-secret'
-        else:
-            call(['kubectl',
-                  '--namespace', namespace,
-                  'delete', 'service', unit + '-secret'])
-    unitdata.kv().set(unit + '-secret', secret_info)
-    return create_secret(container, namespace)
-
-
-def check_pods(unit, namespace):
-    """Checks if all pods from a service are running.
-
-    Args:
-        unit (str): unit
-        namespace (str): namespace of service
-    Returns:
-        True | False
-    """
-    deployment_status = check_output(['kubectl',
-                                      '--namespace', namespace,
-                                      'get',
-                                      'pods',
-                                      '--selector=' + selector + '=' + unit,
-                                      '--output=jsonpath={.items[*].status.containerStatuses[*].ready}'
-                                      ]).decode('utf-8')
-    pods_ready = deployment_status.split(' ')
-    for pod in pods_ready:
-        if pod == 'false':
-            return False
-    return True
-
-
-def get_pod_error_message(unit, namespace):
-    """Return the first encountered error state of a pod within a service.
-
-    Args:
-        unit (str): unit
-        namespace (str): namespace of the pods
-    Returns:
-        None | dict
-
-    """
-    deployment_status = json.loads(check_output(['kubectl',
-                                                 '--namespace', namespace,
-                                                 'get',
-                                                 'pods',
-                                                 '--selector=' + selector + '=' + unit,
-                                                 '-o',
-                                                 'json'
-                                                 ]).decode('utf-8'))
-    if deployment_status:
-        for item in deployment_status['items']:
-            for status in item['status']['containerStatuses']:
-                if status['ready'] is False:
-                    return status['state']
-    return None
-
-
-def delete_resource_label(resource, label, namespace="default"):
-    try:
-        check_call(['kubectl',
-                    'delete',
-                    resource,
-                    '--namespace',
-                    namespace,
-                    '--selector=' + label])
-    except CalledProcessError as e:
-        log(e)
+    application_names = {}
+    service_names = {}
+    for request in requests:
+        application_names[request['unit'].split('/')[0]] = request
+    for app, hs_req in application_names.items():
+        request = {
+            'name': app,
+            'namespace': config.get('namespace').rstrip(),
+            'port': hs_req['port'],
+            'ips': hs_req['ips']
+        }
+        headless_service = ResourceFactory.create_resource('headless-service', request)
+        headless_service.write_resource_file()
+        service_names[headless_service.name()] = app
+    headless_service.create_resource()  # One call to create resources will create all new / modified services
+    used_apps = unitdata.kv().get('used_apps', [])
+    unitdata.kv().set('used_apps', list(set(used_apps) | application_names.keys()))
+    return get_running_info(service_names)

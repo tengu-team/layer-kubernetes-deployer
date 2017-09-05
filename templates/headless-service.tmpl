@@ -7,15 +7,22 @@ metadata:
     {{juju_selector}}: {{uname}}
     {{deployer_selector}}: {{deployer}}
 spec:
-  type: NodePort
-  selector:
+  clusterIP: "None"
+  ports:
+    - port: {{port}}
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: {{name}}
+  namespace: {{namespace}}
+  labels:
     {{juju_selector}}: {{uname}}
     {{deployer_selector}}: {{deployer}}
-  ports:
-{%- for port_info in ports %}
-{%- for port, port_name in port_info.items() %}
-    - name: {{port_name}}
-      protocol: TCP
-      port: {{port}}
+subsets:
+  - addresses:
+{%- for ip in ips %}
+      - ip: {{ip}}
 {%- endfor %}
-{%- endfor %}
+    ports:
+      - port: {{port}}
