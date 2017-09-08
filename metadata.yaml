@@ -3,6 +3,8 @@ summary: This charm provides auto deployment for kubernetes
 maintainer: Sander Borny <sander.borny@ugent.be>
 description: |
   This charm provides auto deployment for kubernetes
+tags:
+  - misc
 provides:
   docker-image-host:
     interface: docker-image-host

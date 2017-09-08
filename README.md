@@ -23,8 +23,8 @@ juju remove-unit limeds/2 # Remove a limeds pod
 ```
 
 ## Configuring the application
-- `namespace`: Every deployer is limited to one namespace. These namespaces can be shared with other deployers.
-- `isolated`: Currently not yet implemented.
+- `namespace`: Every deployer is limited to one namespace. **These namespaces should be unique per deployer charm!**
+- `isolated`: Requires a Kubernetes cluster with network policy support. If true all pods within the namespace are isolated.
 - `rolling-updates`: Kubernetes update strategy ([info](https://kubernetes.io/docs/tutorials/kubernetes-basics/update-intro/)).
 
 ## Important Notes

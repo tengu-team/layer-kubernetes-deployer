@@ -6,7 +6,12 @@ from charms.reactive import when, when_not, remove_state, set_state, when_not_al
 from charmhelpers.core.hookenv import log, is_leader, status_set
 from charmhelpers.core import unitdata, hookenv
 from charms.layer.resourcefactory import ResourceFactory
-from charms.layer.k8shelpers import get_running_containers, delete_resources_by_label, get_label_values_per_deployer
+from charms.layer.k8shelpers import (
+    get_running_containers,
+    delete_resources_by_label,
+    get_label_values_per_deployer,
+    add_label_to_resource
+)
 
 
 # Add kubectl to PATH
@@ -31,21 +36,25 @@ def install_deployer():
     # General deployer options
     deployers_path = '/home/kubedeployer/.config/kubedeployers'
     deployer_path = deployers_path + '/' + os.environ['JUJU_UNIT_NAME'].replace('/', '-')
-    juju_app_selector = 'juju-app'
-    deployer_selector = 'deployer'
     # Save then in the kv store
+    namespace_selector = 'ns'
     unitdata.kv().set('deployers_path', deployers_path)
     unitdata.kv().set('deployer_path', deployer_path)
-    unitdata.kv().set('juju_app_selector', juju_app_selector)
-    unitdata.kv().set('deployer_selector', deployer_selector)
+    unitdata.kv().set('juju_app_selector', 'juju-app')
+    unitdata.kv().set('deployer_selector', 'deployer')
+    unitdata.kv().set('namespace_selector', namespace_selector)
     # Setup dir structure
     log('Setting up deployer dirs in: ' + deployer_path)
-    if not os.path.exists('/home/kubedeployer/.config/kubedeployers/namespaces'):
-        os.makedirs('/home/kubedeployer/.config/kubedeployers/namespaces')
+    global_dirs = ['namespaces', 'network-policies']
+    for gd in global_dirs:
+        if not os.path.exists(deployers_path + '/' + gd):
+            os.makedirs(deployers_path + '/' + gd)
     dirs = ['deployments', 'services', 'secrets', 'headless-services']
     for d in dirs:
         if not os.path.exists(deployer_path + '/' + d):
             os.makedirs(deployer_path + '/' + d)
+    # Setup the default namespace
+    add_label_to_resource('default', namespace_selector + '=default', 'namespace', 'default', True)
     set_state('deployer.installed')
 
 
@@ -112,17 +121,6 @@ def launch(relation, kube):
 CLEANUP STATES
 """
 
-'''
-@when_not('kubernetes-deployer.available')
-def ensure_cleanup_state_kube_deployer():
-    set_state('resources.created')
-
-
-@when_not('docker-image-host.available')
-def ensure_cleanup_state_docker_host():
-    set_state('deployments.created')
-'''
-
 
 @when_not_all('kubernetes-deployer.available', 'docker-image-host.available')
 def ensure_cleanup():
@@ -134,6 +132,8 @@ def ensure_cleanup():
 def cleanup(kube):
     # Iterate over all resources with label from this deployer
     # Remove all which are not needed anymore
+    if not is_leader():
+        return
     needed_apps = unitdata.kv().get('used_apps', [])
     all_apps = get_label_values_per_deployer(config.get('namespace').rstrip(),
                                              unitdata.kv().get('juju_app_selector'),
@@ -147,7 +147,7 @@ def cleanup(kube):
                                       unitdata.kv().get('juju_app_selector') + '=' + app)
     unitdata.kv().set('used_apps', [])
 
-    if config.previous('namespace'):
+    if config.changed('namespace') and config.previous('namespace'):
         log('Checking if previous namespace still has resources, if not delete namespace (' +
             config.previous('namespace') + ')')
         namespace = ResourceFactory.create_resource('namespace', {'name': config.previous('namespace')})
@@ -156,6 +156,24 @@ def cleanup(kube):
     remove_state('resources.created')
     remove_state('deployments.created')
 
+
+@when('deployer.installed')
+def create_policies():
+    if not is_leader():
+        return
+    configure_namespace()
+    request = {
+        'namespace': config['namespace'],
+        'name': os.environ['JUJU_UNIT_NAME'].replace('/', '-')
+    }
+    policy = ResourceFactory.create_resource('network-policy', request)
+    if not config['isolated'] :
+        policy.delete_resource()
+        return
+    if config.changed('namespace') and config.previous('namespace'):
+        policy.delete_resource()
+    policy.write_resource_file()
+    policy.create_resource()
 
 def clean_deployer_config(resources=None):
     """Remove all resource files from this deployer. If no resources are given,
@@ -209,7 +227,7 @@ def configure_namespace():
     namespace.write_resource_file()
     namespace.create_resource()
     # Check if config.namespace changed
-    if config.changed('namespace'):
+    if config.changed('namespace') and config.previous('namespace'):
         # Remove all resources from previous namespace created by this deployer
         prev_namespace = ResourceFactory.create_resource('namespace',
                                                          {'name': config.previous('namespace'),

@@ -20,6 +20,21 @@ def create_resources(path):
         log(e)
 
 
+def create_resource_by_file(path):
+    """Create a resource via file
+
+    Args:
+        path (str): path to config yaml
+    Returns:
+        True | False on success or failure
+    """
+    try:
+        check_call(['kubectl', 'create', '-f', path])
+    except CalledProcessError:
+        return False
+    return True
+
+
 def delete_resources_by_label(namespace, resources, label):  # resources is type list !
     try:
         check_call(['kubectl',
@@ -40,6 +55,16 @@ def delete_resource_by_name(namespace, resource, name):
                     '--namespace',
                     namespace,
                     name])
+    except CalledProcessError as e:
+        log(e)
+
+
+def delete_resource_by_file(path):
+    try:
+        check_call(['kubectl',
+                    'delete',
+                    '-f',
+                    path])
     except CalledProcessError as e:
         log(e)
 
@@ -118,6 +143,31 @@ def get_label_values_per_deployer(namespace, label, deployerlabel):
     return list(unique_values)
 
 
+def add_label_to_resource(namespace, label, resource, resourcename, overwrite=False):
+    """
+        Args:
+            namespace (str): namespace to search in
+            label (str): label to add (format => selector=value)
+            resource (str): type of resource
+            resourcename (str): name of the resource
+            overwrite (bool): turn on overwrite flag
+    """
+    cmd = list()
+    cmd.append('kubectl')
+    cmd.append('label')
+    cmd.append('-n')
+    cmd.append(namespace)
+    cmd.append(resource)
+    cmd.append(resourcename)
+    cmd.append(label)
+    if overwrite:
+        cmd.append('--overwrite')
+    try:
+        check_call(cmd)
+    except CalledProcessError as e:
+        log(e)
+
+
 '''
 NAMESPACE HELPER METHODS
 '''
@@ -138,21 +188,6 @@ def namespace_exists(namespace):
     return True
 
 
-def create_namespace_by_file(path):
-    """Create a namespace via file
-
-    Args:
-        path (str): path to namespace yaml
-    Returns:
-        True | False on success or failure
-    """
-    try:
-        check_call(['kubectl', 'create', '-f', path])
-    except CalledProcessError:
-        return False
-    return True
-
-
 def delete_namespace(namespace):
     """Delete a namespace if no pods are running in the namespace
 
@@ -168,6 +203,18 @@ def delete_namespace(namespace):
         call(['kubectl', 'delete', 'namespace', namespace])
     else:
         log('Resources found for namespace ' + namespace + ', not deleting')
+
+'''
+SERVICE HELPER METHODS
+'''
+
+
+def service_exists(namespace, name):
+    try:
+        check_call(['kubectl', 'get', 'service', '-n', namespace, name])
+    except CalledProcessError:
+        return False
+    return True
 
 
 '''
@@ -239,3 +286,33 @@ def create_secret(namespace, name, username, password, juju_app_label, deployer_
         log(e)
 
 
+'''
+NETWORKPOLICY HELPER METHODS
+'''
+
+
+def networkpolicy_exists(namespace, name):
+    """
+    Args:
+        namespace (str): namespace to search in
+        name (str): name of the networkpolicy
+    Returns:
+        True | False
+    """
+    try:
+        check_call(['kubectl', 'get', 'networkpolicy', name, '-n', namespace])
+    except CalledProcessError:
+        return False
+    return True
+
+
+def delete_networkpolicy(namespace, name):
+    """
+    Args:
+        namespace (str): namespace to search in
+        name (str): name of the networkpolicy
+    """
+    try:
+        call(['kubectl', 'delete', 'networkpolicy', name, '-n', namespace])
+    except CalledProcessError as e:
+        log(e)

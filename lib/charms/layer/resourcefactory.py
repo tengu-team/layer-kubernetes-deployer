@@ -20,6 +20,8 @@ class ResourceFactory(object):
             return Service(request)
         elif resource_type == 'headless-service':
             return HeadlessService(request)
+        elif resource_type == 'network-policy':
+            return NetworkPolicy(request)
 
 
 class Resource(object):
@@ -28,6 +30,7 @@ class Resource(object):
         self.deployer_name = os.environ['JUJU_UNIT_NAME'].split('/')[0]
         self.juju_app_selector = unitdata.kv().get('juju_app_selector')
         self.deployer_selector = unitdata.kv().get('deployer_selector')
+        self.namespace_selector = unitdata.kv().get('namespace_selector')
         self.deployers_path = unitdata.kv().get('deployers_path')  # Path to all deployer dirs
         self.deployer_path = unitdata.kv().get('deployer_path')  # Path to this deployer dir
 
@@ -42,6 +45,37 @@ class Resource(object):
 
     def name(self):
         raise NotImplementedError()
+
+
+class NetworkPolicy(Resource):
+    """request = {
+        'namespace': namespace of the policy,
+        'name': name of the policy
+    }    
+    """
+    def write_resource_file(self):
+        render(source='network-policy.tmpl',
+               target=self.deployers_path + '/network-policies/' + self.request['name'] + '.yaml',
+               context={
+                   'name': self.request['name'],
+                   'namespace': self.request['namespace'],
+                   'namespace_selector': self.namespace_selector
+               })
+
+    def create_resource(self):
+        if not k8s.networkpolicy_exists(self.request['namespace'], self.name()):
+            k8s.create_resource_by_file(self.deployers_path + '/network-policies/' + self.request['name'] + '.yaml')
+
+    def name(self):
+        return self.request['name']
+
+    def delete_resource(self):
+        if not k8s.networkpolicy_exists(self.request['namespace'], self.name()):
+            return
+        k8s.delete_networkpolicy(self.request['namespace'], self.name())
+        resource_path = self.deployers_path + '/network-policies/' + self.request['name'] + '.yaml'
+        if os.path.exists(resource_path):
+            os.remove(resource_path)
 
 
 class HeadlessService(Resource):
@@ -73,7 +107,6 @@ class HeadlessService(Resource):
         return self.request['name'] + '-headless-service'
 
     def delete_resource(self):
-        # Delete endpoint manually? TODO
         k8s.delete_resource_by_name(self.request['namespace'],
                                     'service',
                                     self.name())
@@ -214,7 +247,8 @@ class Namespace(Resource):
         namespace_context = {
             'namespace': self.request['name'],
             'deployer': self.request['deployer'],
-            'deployer_selector': self.deployer_selector
+            'deployer_selector': self.deployer_selector,
+            'namespace_selector': self.namespace_selector
         }
         render(source='namespace.tmpl',
                target=self.deployers_path + '/namespaces/' + self.request['name'] + '.yaml',
@@ -225,7 +259,7 @@ class Namespace(Resource):
 
     def create_resource(self):
         if not k8s.namespace_exists(self.request['name']):
-            k8s.create_namespace_by_file(self.deployers_path + '/namespaces/' + self.request['name'] + '.yaml')
+            k8s.create_resource_by_file(self.deployers_path + '/namespaces/' + self.request['name'] + '.yaml')
 
     def delete_resource(self):
         k8s.delete_namespace(self.request['name'])
