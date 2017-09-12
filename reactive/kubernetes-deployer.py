@@ -213,7 +213,7 @@ def get_ports_context(container):
     """
     ports = []
     counter = 1
-    if 'ports' in container:
+    if 'ports' in container and container['ports']:
         for key, value in container['ports'].items():
             if value != "":
                 ports.append({key: key + '-' + str(counter)})

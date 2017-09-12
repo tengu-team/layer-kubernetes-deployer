@@ -98,7 +98,8 @@ def get_running_containers(unit, namespace):
                 'host': '0.0.0.0',
                 'ports': {
                           '8080': 30000
-                         }
+                         },
+                'service_name': 'example-service'
              }
     """
     config = {'host': get_random_node_ip()}
@@ -107,7 +108,7 @@ def get_running_containers(unit, namespace):
                                      '--namespace', namespace,
                                      'get',
                                      'service',
-                                     unit,  # Full name?
+                                     unit,
                                      '-o',
                                      'json']).decode('utf-8')
         service = json.loads(service_info)
@@ -116,6 +117,7 @@ def get_running_containers(unit, namespace):
             if 'nodePort' in port:
                 ports[port['port']] = port['nodePort']
         config['ports'] = ports
+        config['service_name'] = unit
     except CalledProcessError:
         pass
     return config
