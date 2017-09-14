@@ -2,7 +2,7 @@
 import os
 import shutil
 from collections import defaultdict
-from charms.reactive import when, when_not, remove_state, set_state, when_not_all
+from charms.reactive import when, when_not, remove_state, set_state, when_not_all, hook
 from charmhelpers.core.hookenv import log, is_leader, status_set
 from charmhelpers.core import unitdata, hookenv
 from charms.layer.resourcefactory import ResourceFactory
@@ -92,9 +92,10 @@ def launch(relation, kube):
     application_names = {}  # Dict with all applications with their request
     container_requests = relation.container_requests
     for container_request in container_requests:
-        unit = container_request['unit'].split('/')[0]
-        application_names[unit] = container_request
-        application_units[unit].append(container_request['unit'])
+        if container_request:
+            unit = container_request['unit'].split('/')[0]
+            application_names[unit] = container_request
+            application_units[unit].append(container_request['unit'])
     # Per app create resource files
     service_names = {}  # Save all service names so we can query them later
     for app, request in application_names.items():
@@ -141,20 +142,25 @@ def cleanup(kube):
                                              os.environ['JUJU_UNIT_NAME'].split('/')[0])
     for app in all_apps:
         if app not in needed_apps:
-            # Remove resource via label TODO TESTING!!!!!
+            # Remove resource via label
             delete_resources_by_label(config.get('namespace').rstrip(),
                                       ['all'],
                                       unitdata.kv().get('juju_app_selector') + '=' + app)
     unitdata.kv().set('used_apps', [])
 
-    if config.changed('namespace') and config.previous('namespace'):
+    if config.changed('namespace') and config.previous('namespace').rstrip():
         log('Checking if previous namespace still has resources, if not delete namespace (' +
-            config.previous('namespace') + ')')
-        namespace = ResourceFactory.create_resource('namespace', {'name': config.previous('namespace')})
+            config.previous('namespace').rstrip() + ')')
+        namespace = ResourceFactory.create_resource('namespace', {'name': config.previous('namespace').rstrip()})
         namespace.delete_resource()
 
     remove_state('resources.created')
     remove_state('deployments.created')
+
+
+@hook('stop')
+def clean_deployer_configs():
+    shutil.rmtree(unitdata.kv().get('deployer_path'))
 
 
 @when('deployer.installed')
@@ -163,17 +169,18 @@ def create_policies():
         return
     configure_namespace()
     request = {
-        'namespace': config['namespace'],
+        'namespace': config['namespace'].rstrip(''),
         'name': os.environ['JUJU_UNIT_NAME'].replace('/', '-')
     }
     policy = ResourceFactory.create_resource('network-policy', request)
     if not config['isolated'] :
         policy.delete_resource()
         return
-    if config.changed('namespace') and config.previous('namespace'):
+    if config.changed('namespace') and config.previous('namespace').rstrip():
         policy.delete_resource()
     policy.write_resource_file()
     policy.create_resource()
+
 
 def clean_deployer_config(resources=None):
     """Remove all resource files from this deployer. If no resources are given,
@@ -227,10 +234,10 @@ def configure_namespace():
     namespace.write_resource_file()
     namespace.create_resource()
     # Check if config.namespace changed
-    if config.changed('namespace') and config.previous('namespace'):
+    if config.changed('namespace') and config.previous('namespace').rstrip():
         # Remove all resources from previous namespace created by this deployer
         prev_namespace = ResourceFactory.create_resource('namespace',
-                                                         {'name': config.previous('namespace'),
+                                                         {'name': config.previous('namespace').rstrip(),
                                                           'deployer': deployer})
         prev_namespace.delete_namespace_resources()
 

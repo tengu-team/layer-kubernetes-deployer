@@ -99,7 +99,7 @@ def get_running_containers(unit, namespace):
                 'ports': {
                           '8080': 30000
                          },
-                'service_name': 'example-service'
+                'service_name': 'fqdn'
              }
     """
     config = {'host': get_random_node_ip()}
@@ -117,7 +117,7 @@ def get_running_containers(unit, namespace):
             if 'nodePort' in port:
                 ports[port['port']] = port['nodePort']
         config['ports'] = ports
-        config['service_name'] = unit
+        config['service_name'] = service['metadata']['name'] + '.' + service['metadata']['namespace']
     except CalledProcessError:
         pass
     return config
@@ -195,6 +195,8 @@ def delete_namespace(namespace):
 
      Args:
          namespace (str): name of the namespace
+     Return:
+         True | False
     """
     if not check_output(['kubectl',
                          'get',
@@ -203,8 +205,9 @@ def delete_namespace(namespace):
                          namespace]):
         log('No resources found for namespace ' + namespace + ' ... deleting')
         call(['kubectl', 'delete', 'namespace', namespace])
-    else:
-        log('Resources found for namespace ' + namespace + ', not deleting')
+        return True
+    # log('Resources found for namespace ' + namespace + ', not deleting')
+    return False
 
 '''
 SERVICE HELPER METHODS

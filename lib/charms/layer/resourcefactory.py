@@ -262,7 +262,10 @@ class Namespace(Resource):
             k8s.create_resource_by_file(self.deployers_path + '/namespaces/' + self.request['name'] + '.yaml')
 
     def delete_resource(self):
-        k8s.delete_namespace(self.request['name'])
+        if k8s.delete_namespace(self.request['name']):
+            path = self.deployers_path + '/namespaces/' + self.request['name'] + '.yaml'
+            if os.path.exists(path):
+                os.remove(path)
 
     def delete_namespace_resources(self):
         resources = ['services', 'deployments', 'endpoints', 'secrets']
