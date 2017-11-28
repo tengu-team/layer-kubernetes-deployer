@@ -234,7 +234,7 @@ def configure_namespace():
     namespace.write_resource_file()
     namespace.create_resource()
     # Check if config.namespace changed
-    if config.changed('namespace') and config.previous('namespace').rstrip():
+    if config.changed('namespace') and config.previous('namespace'):
         # Remove all resources from previous namespace created by this deployer
         prev_namespace = ResourceFactory.create_resource('namespace',
                                                          {'name': config.previous('namespace').rstrip(),
