@@ -168,11 +168,12 @@ class Deployment(Resource):
                    'namespace': config.get('namespace').rstrip(),
                    'rolling': config.get('rolling-updates'),
                    'env_vars': self.request['env_vars'],
-                   'env_order': self.request['env_order'],
                    'juju_selector': self.juju_app_selector,
                    'deployer_selector': self.deployer_selector,
                    'deployer': self.deployer_name
                }
+        if 'env_order' in self.request:
+            deployment_context['env_order'] = self.request['env_order']
         if 'secret' in self.request:
             deployment_context['imagesecret'] = self.request['secret']
         render(source='deployment.tmpl',
