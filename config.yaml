@@ -9,8 +9,3 @@ options:
     default: False
     description: |
       When true, the pods will only be able to receive traffic from inside the same namespace.
-  rolling-updates:
-    type: boolean
-    default: True
-    description: |
-      When true, the deployment strategy will be rolling updates (max surge 1).

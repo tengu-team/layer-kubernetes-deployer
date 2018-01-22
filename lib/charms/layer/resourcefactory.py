@@ -1,4 +1,7 @@
 import os
+import re
+import yaml
+import time
 from . import k8shelpers as k8s
 from charmhelpers.core.templating import render
 from charmhelpers.core import unitdata
@@ -10,16 +13,10 @@ config = config()
 class ResourceFactory(object):
     @staticmethod
     def create_resource(resource_type, request):
-        if resource_type == 'deployment':
-            return Deployment(request)
+        if resource_type == 'preparedresource':
+            return PreparedResource(request)
         elif resource_type == 'namespace':
             return Namespace(request)
-        elif resource_type == 'secret':
-            return Secret(request)
-        elif resource_type == 'service':
-            return Service(request)
-        elif resource_type == 'headless-service':
-            return HeadlessService(request)
         elif resource_type == 'network-policy':
             return NetworkPolicy(request)
 
@@ -45,6 +42,48 @@ class Resource(object):
 
     def name(self):
         raise NotImplementedError()
+
+
+class PreparedResource(Resource):
+    """request = {
+        'name': name of the juju unit requesting the resource,
+        'resource': resource info,
+        'namespace': namespace where to create resource,
+        'unique_id': an id needed to generate unique file names, MUST be INT
+    }
+    request contains the full resource file in a dict
+    """
+    def write_resource_file(self):
+        # Fill in namespace and labels
+        # Check needed for valid metadata tag (if it even exists??)
+        if 'metadata' not in self.request['resource']:
+            self.request['resource']['metadata'] = {}
+        self.request['resource']['metadata']['namespace'] = self.request['namespace']
+        if 'labels' not in self.request['resource']['metadata']:
+            self.request['resource']['metadata']['labels'] = {}
+        self.request['resource']['metadata']['labels'][self.juju_app_selector] = self.request['name']
+        self.request['resource']['metadata']['labels'][self.deployer_selector] = self.deployer_name
+
+        with open(self.deployer_path +
+                  '/resources/' +
+                  self.request['name'] +
+                  '-' +
+                  str(self.request['unique_id']) +
+                  '.yaml', 'w+') as f:
+            yaml.dump(self.request['resource'], f)
+
+    def delete_resource(self):
+        # WARNING This will delete ALL resources requested from the juju unit
+        unit_name = self.request['name'].split('/')  # Filter away the juju unit number
+        for file in os.listdir(self.deployer_path + '/resources'):
+            if re.match('^' + unit_name + '-(\d+)\.yaml'):
+                k8s.delete_resource_by_file(self.deployer_path + '/resources/' + file)
+
+    def name(self):
+        return self.request['name']
+
+    def create_resource(self):
+        k8s.create_resources(self.deployer_path)
 
 
 class NetworkPolicy(Resource):
@@ -76,165 +115,6 @@ class NetworkPolicy(Resource):
         resource_path = self.deployers_path + '/network-policies/' + self.request['name'] + '.yaml'
         if os.path.exists(resource_path):
             os.remove(resource_path)
-
-
-class HeadlessService(Resource):
-    """request = {
-        'name': name of the service,
-        'namespace': namespace of the service,
-        'port': port for the service,
-        'ips': addresses for the service
-    }    
-    """
-    def write_resource_file(self):
-        render(source='headless-service.tmpl',
-               target=self.deployer_path + '/headless-services/' + self.request['name'] + '.yaml',
-               context={
-                   'name': self.name(),
-                   'namespace': self.request['namespace'],
-                   'juju_selector': self.juju_app_selector,
-                   'uname': self.request['name'],
-                   'deployer_selector': self.deployer_selector,
-                   'deployer': self.deployer_name,
-                   'port': self.request['port'],
-                   'ips': self.request['ips']
-               })
-
-    def create_resource(self):
-        k8s.create_resources(self.deployer_path)
-
-    def name(self):
-        return self.request['name'] + '-headless-service'
-
-    def delete_resource(self):
-        k8s.delete_resource_by_name(self.request['namespace'],
-                                    'service',
-                                    self.name())
-
-
-class Service(Resource):
-    """request = {
-        'name': name of the service,
-        'ports': port for the service,
-        'namespace': namespace of the service
-    }    
-    """
-    def write_resource_file(self):
-        service_context = {
-            'name': self.name(),
-            'uname': self.request['name'],
-            'ports': self.request['ports'],
-            'namespace': self.request['namespace'],
-            'juju_selector': self.juju_app_selector,
-            'deployer_selector': self.deployer_selector,
-            'deployer': self.deployer_name
-        }
-        render(source='service.tmpl',
-               target=self.deployer_path + '/services/' + self.request['name'] + '.yaml',
-               context=service_context)
-
-    def create_resource(self):
-        k8s.create_resources(self.deployer_path)
-
-    def name(self):
-        return self.request['name'] + '-service'
-
-    def delete_resource(self):
-        k8s.delete_resource_by_name(self.request['namespace'],
-                                    'service',
-                                    self.name())
-        # os.remove(self.deployer_path + '/secrets/' + self.request['app'] + '.yaml')
-
-
-class Deployment(Resource):
-    """request = {
-        'name': name of the deployment,
-        'replicas': nr of pods,
-        'image': docker image,
-        'namespace': namespace for deployment,
-        'rolling': rolling updates (bool),
-        'env_vars': env vars for pods,
-        'env_order': order of env vars,
-        'secret': secret to use
-    }
-    """
-    def write_resource_file(self):
-        log('Writing resource file for deployment')
-        deployment_context = {
-                   'name': self.name(),
-                   'uname': self.request['name'],
-                   'replicas': self.request['replicas'],
-                   'image': self.request.get('image'),
-                   'namespace': config.get('namespace').rstrip(),
-                   'rolling': config.get('rolling-updates'),
-                   'env_vars': self.request['env_vars'],
-                   'juju_selector': self.juju_app_selector,
-                   'deployer_selector': self.deployer_selector,
-                   'deployer': self.deployer_name
-               }
-        if 'env_order' in self.request:
-            deployment_context['env_order'] = self.request['env_order']
-        if 'secret' in self.request:
-            deployment_context['imagesecret'] = self.request['secret']
-        render(source='deployment.tmpl',
-               target=self.deployer_path + '/deployments/' + self.request['name'] + '.yaml',
-               context=deployment_context)
-
-    def name(self):
-        return self.request['name'] + '-deployment'
-
-    def delete_resource(self):
-        k8s.delete_resource_by_name(config.get('namespace').rstrip(),
-                                    'deployment',
-                                    self.request['app'] + '-deployment')
-        # os.remove(self.deployer_path + '/deployments/' + self.request['app'] + '.yaml')
-
-    def create_resource(self):
-        k8s.create_resources(self.deployer_path)
-
-
-class Secret(Resource):
-    """request = {
-        'username': docker username,
-        'password': docker password,
-        'docker-registry': docker registry (default https://index.docker.io/v1/),
-        'deployer': name of the deployer,
-        'app': name of the app requiring the secret,
-        'namespace': namespace of the secret
-        
-        Secret requests will be saved into the kv store in order to monitor changes. Using files to check
-        if the secret updates does not work since every iteration a new file name is given and base64 encoded.
-    }    
-    """
-    def write_resource_file(self):
-        log('Docker secret does not require resource file.')
-        raise NotImplementedError()
-
-    def create_resource(self):
-        # Check if resource already exists
-        if self.secret_exists():
-            # Check if new secret is needed
-            if unitdata.kv().get(self.request['app']) == self.request:
-                return
-            else:
-                self.delete_resource()
-        k8s.create_secret(self.request['namespace'],
-                          self.request['app'],
-                          self.request['username'],
-                          self.request['password'],
-                          self.juju_app_selector + '=' + self.request['app'],
-                          self.deployer_selector + '=' + self.request['deployer'],
-                          self.request['docker-registry'])
-        unitdata.kv().set(self.request['app'], self.request)
-
-    def secret_exists(self):
-        return k8s.secret_exists(self.request['app'], self.request['namespace'])
-
-    def delete_resource(self):
-        k8s.delete_secret(self.request['app'], self.request['namespace'])
-
-    def name(self):
-        return self.request['app']
 
 
 class Namespace(Resource):

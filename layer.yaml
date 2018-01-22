@@ -1,5 +1,4 @@
 includes: ['layer:basic',
-           'interface:docker-image-host',
            'interface:kubernetes-deployer',
            'interface:http']
 repo: git@github.com:tengu-team/layer-kubernetes-deployer.git
@@ -13,3 +12,6 @@ defines:
       perms: 0755
       owner: "kubedeployer"
       group: "kubedeployer"
+options:
+  basic:
+    use_venv: true

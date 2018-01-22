@@ -1,4 +1,4 @@
-name: kubernetes-deployer
+name: kubernetes-deployer-final
 summary: This charm provides auto deployment for kubernetes
 maintainer: Sander Borny <sander.borny@ugent.be>
 description: |
@@ -6,8 +6,6 @@ description: |
 tags:
   - misc
 provides:
-  docker-image-host:
-    interface: docker-image-host
   kubernetes-deployer:
     interface: kubernetes-deployer
 requires:
