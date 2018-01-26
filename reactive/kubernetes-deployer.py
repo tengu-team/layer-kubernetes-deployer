@@ -4,7 +4,7 @@ import json
 import shutil
 from subprocess import run, CalledProcessError, PIPE
 from collections import defaultdict
-from charms.reactive import when, when_not, remove_state, set_state, when_not_all, hook, clear_flag
+from charms.reactive import when, when_not, set_flag, when_not_all, hook, clear_flag, when_any
 from charms.reactive.relations import endpoint_from_flag
 from charmhelpers.core.hookenv import log, is_leader, status_set
 from charmhelpers.core import unitdata, hookenv
@@ -12,7 +12,8 @@ from charms.layer.resourcefactory import ResourceFactory
 from charms.layer.k8shelpers import (
     delete_resources_by_label,
     get_label_values_per_deployer,
-    add_label_to_resource
+    add_label_to_resource,
+    get_worker_node_ips,
 )
 
 
@@ -57,7 +58,7 @@ def install_deployer():
             os.makedirs(deployer_path + '/' + d)
     # Setup the default namespace
     add_label_to_resource('default', namespace_selector + '=default', 'namespace', 'default', True)
-    set_state('deployer.installed')
+    set_flag('deployer.installed')
 
 
 @when('endpoint.kubernetes-deployer.available', 'kube-host.available')
@@ -88,7 +89,8 @@ def new_resource_request(dep, kube):
             pre_resource.write_resource_file()
             pre_resource.create_resource()
     dep.send_status(check_predefined_resources())
-    set_state('resources.created')
+    dep.send_worker_ips(get_worker_node_ips())
+    set_flag('resources.created')
 
 
 """
@@ -96,9 +98,8 @@ CLEANUP STATES
 """
 
 
-@when('kube-host.available',
-      'resources.created')
-def cleanup(kube):
+@when_any('resources.created', 'endpoint.kubernetes-deployer.cleanup')
+def cleanup():
     # Iterate over all resources with label from this deployer
     # Remove all which are not needed anymore
     if not is_leader():
@@ -121,7 +122,8 @@ def cleanup(kube):
             config.previous('namespace').rstrip() + ')')
         namespace = ResourceFactory.create_resource('namespace', {'name': config.previous('namespace').rstrip()})
         namespace.delete_resource()
-    remove_state('resources.created')
+    clear_flag('resources.created')
+    clear_flag('endpoint.kubernetes-deployer.cleanup')
 
 
 @hook('stop')

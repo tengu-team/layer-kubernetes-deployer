@@ -1,4 +1,4 @@
-name: kubernetes-deployer-final
+name: kubernetes-deployer
 summary: This charm provides auto deployment for kubernetes
 maintainer: Sander Borny <sander.borny@ugent.be>
 description: |

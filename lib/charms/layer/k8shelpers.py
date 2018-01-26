@@ -69,6 +69,22 @@ def delete_resource_by_file(path):
         log(e)
 
 
+def get_worker_node_ips():
+    """Returns a list with worker ips
+    
+    Returns:
+        list
+    """
+    ips = check_output(['kubectl',
+                        'get',
+                        'nodes',
+                        '-o',
+                        'jsonpath=\'{.items[*].status.addresses[?(@.type==\"InternalIP\")].address}\'',
+                        ]).decode('utf-8')
+    ips = ips.replace("'", "")
+    return ips.split(' ')
+
+
 def get_random_node_ip():
     """Returns a random kubernetes-worker node address.
        Can be an ip adress or hostname
