@@ -98,7 +98,7 @@ CLEANUP STATES
 """
 
 
-@when_any('resources.created', 'endpoint.kubernetes-deployer.cleanup')
+@when_any('resources.created')
 def cleanup():
     # Iterate over all resources with label from this deployer
     # Remove all which are not needed anymore
