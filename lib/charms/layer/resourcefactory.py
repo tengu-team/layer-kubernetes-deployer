@@ -59,7 +59,6 @@ class PreparedResource(Resource):
         if 'metadata' not in self.request['resource']:
             self.request['resource']['metadata'] = {}
         self.request['resource']['metadata']['namespace'] = self.request['namespace']
-        self.request['resource']['metadata']['name'] += '-' + self.request['name']
         if 'labels' not in self.request['resource']['metadata']:
             self.request['resource']['metadata']['labels'] = {}
         self.request['resource']['metadata']['labels'][self.juju_app_selector] = self.request['name']
