@@ -4,7 +4,15 @@ import json
 import shutil
 from subprocess import run, CalledProcessError, PIPE
 from collections import defaultdict
-from charms.reactive import when, when_not, set_flag, when_not_all, hook, clear_flag, when_any
+from charms.reactive import (
+    when,
+    when_not,
+    set_flag,
+    when_not_all,
+    hook,
+    clear_flag,
+    when_any,
+)
 from charms.reactive.relations import endpoint_from_flag
 from charmhelpers.core.hookenv import log, is_leader, status_set
 from charmhelpers.core import unitdata, hookenv
@@ -14,6 +22,7 @@ from charms.layer.k8shelpers import (
     get_label_values_per_deployer,
     add_label_to_resource,
     get_worker_node_ips,
+    resource_owner,
 )
 
 
@@ -73,11 +82,16 @@ def new_resource_request(dep, kube):
         application_names[request['remote_unit_name'].split('/')[0]] = request['resource']
     used_apps = unitdata.kv().get('used_apps', [])
     unitdata.kv().set('used_apps', list(set(used_apps) | application_names.keys()))
+    error_states = {}
     for app, resources in application_names.items():
         if not resources:
             continue
         unique_id = 0
         for resource in resources:
+            if resource_name_duplicate(resource, app):
+                error_states[app] = {'error': 'Duplicate name for resource: '
+                                               + resource['metadata']['name']}
+                continue
             prepared_request = {
                 'name': app,
                 'resource': resource,
@@ -88,7 +102,9 @@ def new_resource_request(dep, kube):
             pre_resource = ResourceFactory.create_resource('preparedresource', prepared_request)
             pre_resource.write_resource_file()
             pre_resource.create_resource()
-    dep.send_status(check_predefined_resources())
+    status = check_predefined_resources()
+    status.update(error_states)
+    dep.send_status(status)
     dep.send_worker_ips(get_worker_node_ips())
     set_flag('resources.created')
 
@@ -96,6 +112,10 @@ def new_resource_request(dep, kube):
 """
 CLEANUP STATES
 """
+@when('kube-host.available')
+@when_not('endpoint.kubernetes-deployer.available')
+def call_cleanup(kube):
+    cleanup()
 
 
 @when_any('resources.created')
@@ -113,7 +133,7 @@ def cleanup():
         if app not in needed_apps:
             # Remove resource via label
             delete_resources_by_label(config.get('namespace').rstrip(),
-                                      ['all'],
+                                      ['all,cm,secrets'],
                                       unitdata.kv().get('juju_app_selector') + '=' + app)
     unitdata.kv().set('used_apps', [])
 
@@ -128,6 +148,12 @@ def cleanup():
 
 @hook('stop')
 def clean_deployer_configs():
+    path = unitdata.kv().get('deployer_path') + '/resources'
+    for file in os.listdir(path):
+        try:
+            run(['kubectl', 'delete', '-f', path + '/' + file])
+        except CalledProcessError as e:
+            log(e)
     shutil.rmtree(unitdata.kv().get('deployer_path'))
 
 
@@ -200,3 +226,21 @@ def check_predefined_resources():
         except CalledProcessError:
             result[juju_unit_name] = False
     return result
+
+
+def resource_name_duplicate(resource, app):
+    """Check if the resource name already exists 
+    in this namespace
+
+    Args:
+        resource (dict)
+        app (str): name of the juju unit requesting the resource
+    Returns:
+        True | False
+    """
+    owner = resource_owner(config.get('namespace', 'default'),
+                           resource['metadata']['name'], 
+                           unitdata.kv().get('juju_app_selector')) 
+    if owner and owner != app:
+        return True
+    return False

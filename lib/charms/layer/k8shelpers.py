@@ -142,16 +142,21 @@ def get_running_containers(unit, namespace):
 def get_label_values_per_deployer(namespace, label, deployerlabel):
     """Return a list with all distinct label values in this namespace.
     
+    IMPORTANT:
+    `kubectl get all,cm` is used, not all resource types are returned,
+    see https://github.com/kubernetes/kubectl/issues/151.
+    This means ingress, rolebindings and roles are not found !
+    
     Args:
         namespace (str): namespace to search in
         label (str): label
         deployerlabel (str): deployer selector
-    return:
+    Returns:
         list with distinct values
     """
     unique_values = set()
     try:
-        values = check_output(['kubectl', 'get', 'all', '--namespace', namespace, '--selector=' + deployerlabel, '-o',
+        values = check_output(['kubectl', 'get', 'all,cm,secrets', '--namespace', namespace, '--selector=' + deployerlabel, '-o',
                                'jsonpath="{.items[*].metadata.labels[\'' + label + '\']}']).decode('utf-8')
         values = values.replace('"', '')
         for value in values.split(' '):
@@ -185,6 +190,24 @@ def add_label_to_resource(namespace, label, resource, resourcename, overwrite=Fa
     except CalledProcessError as e:
         log(e)
 
+
+def resource_owner(namespace, resource_name, label):
+    """Return the resource owner (if any) of the resource.
+    The owner is expected to be the value of the label.
+
+    Args:
+        namespace (str): namespace to search in
+        resource_name (str): name of the resource
+        label (str): label with the owner
+    Returns:
+        owner (str)
+    """
+    try:
+        owner = check_output(["kubectl", "get", "all,cm,secrets", "-n", namespace, "-o"
+             , 'jsonpath="{.items[?(@.metadata.name==\'' + resource_name + '\')].metadata.labels[\'' + label + '\']}"']).decode('utf-8')
+        return owner.replace('"', '').split(' ')[0]
+    except CalledProcessError as e:
+        log(e)
 
 '''
 NAMESPACE HELPER METHODS
@@ -224,6 +247,8 @@ def delete_namespace(namespace):
         return True
     # log('Resources found for namespace ' + namespace + ', not deleting')
     return False
+
+
 
 '''
 SERVICE HELPER METHODS
