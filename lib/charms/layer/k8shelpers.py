@@ -26,13 +26,13 @@ def create_resource_by_file(path):
     Args:
         path (str): path to config yaml
     Returns:
-        True | False on success or failure
+        json output of kubectl create on success, False on failure.
     """
     try:
-        check_call(['kubectl', 'create', '-f', path])
+        resource = check_output(['kubectl', 'create', '-f', path, '-o', 'json']).decode('utf-8')
+        return json.loads(resource)
     except CalledProcessError:
         return False
-    return True
 
 
 def delete_resources_by_label(namespace, resources, label):  # resources is type list !
@@ -143,7 +143,7 @@ def get_label_values_per_deployer(namespace, label, deployerlabel):
     """Return a list with all distinct label values in this namespace.
     
     IMPORTANT:
-    `kubectl get all,cm` is used, not all resource types are returned,
+    `kubectl get all,cm,secrets` is used, not all resource types are returned,
     see https://github.com/kubernetes/kubectl/issues/151.
     This means ingress, rolebindings and roles are not found !
     

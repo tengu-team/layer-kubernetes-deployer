@@ -79,7 +79,9 @@ def new_resource_request(dep, kube):
     clean_deployer_config(['resources'])
     application_names = {}
     for request in requests:
-        application_names[request['remote_unit_name'].split('/')[0]] = request['resource']
+        if not request['uuid']:
+            continue
+        application_names[request['uuid'].split('/')[0]] = request['resource']
     used_apps = unitdata.kv().get('used_apps', [])
     unitdata.kv().set('used_apps', list(set(used_apps) | application_names.keys()))
     error_states = {}
