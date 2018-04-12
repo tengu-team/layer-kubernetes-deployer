@@ -51,6 +51,21 @@ def resource_exists_by_file(path):
     return True
 
 
+def get_resource_by_file(path):
+    """
+    Return a resource defined via file.
+
+    Args:
+        path (str): path to config yaml
+    Returns:
+        resource or None if not found
+    """
+    try:
+        resource = check_output(['kubectl', 'get', '-f', path, '-o', 'json']).decode('utf-8')
+        return json.loads(resource)
+    except CalledProcessError:
+        return None
+
 def delete_resources_by_label(namespace, resources, label):  # resources is type list !
     try:
         check_call(['kubectl',
