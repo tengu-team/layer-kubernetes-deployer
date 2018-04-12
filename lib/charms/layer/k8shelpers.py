@@ -21,7 +21,7 @@ def create_resources(path):
 
 
 def create_resource_by_file(path):
-    """Create a resource via file
+    """Create a resource via file.
 
     Args:
         path (str): path to config yaml
@@ -33,6 +33,22 @@ def create_resource_by_file(path):
         return json.loads(resource)
     except CalledProcessError:
         return False
+
+
+def resource_exists_by_file(path):
+    """
+    Check if a resource exists via file.
+
+    Args:
+        path (str): path to config yaml
+    Returns:
+        True | False
+    """
+    try:
+        check_call(['kubectl', 'get', '-f', path])
+    except CalledProcessError:
+        return False
+    return True
 
 
 def delete_resources_by_label(namespace, resources, label):  # resources is type list !
