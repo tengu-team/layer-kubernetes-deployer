@@ -2,7 +2,12 @@
 import os
 import json
 import shutil
-from subprocess import run, CalledProcessError, PIPE
+from subprocess import (
+    run,
+    CalledProcessError,
+    PIPE,
+    check_output,
+)
 from collections import defaultdict
 from charms.reactive import (
     when,
@@ -15,7 +20,7 @@ from charms.reactive import (
 )
 from charms.reactive.relations import endpoint_from_flag
 from charmhelpers.core.hookenv import log, is_leader, status_set
-from charmhelpers.core import unitdata, hookenv
+from charmhelpers.core import unitdata, hookenv, host
 from charms.layer.resourcefactory import ResourceFactory
 from charms.layer.k8shelpers import (
     delete_resources_by_label,
@@ -35,12 +40,17 @@ deployer = os.environ['JUJU_UNIT_NAME'].split('/')[0]
 @when_not('kube-host.available')
 def wait_for_k8s():
     status_set('blocked', 'Waiting for relation to Kubernetes-master')
+    clear_flag('kubernetes.ready')
 
 
 @when('kube-host.available')
-@when_not('kube-deployer.connected')
-def set_active(kube):
-    status_set('active', 'Ready')
+@when_not('kubernetes.ready')
+def check_master_ready(kube):
+    if len(master_services_down()) == 0 and all_kube_system_pods_running():
+        status_set('active', 'Ready')
+        set_flag('kubernetes.ready')
+    else:
+        status_set('waiting', 'Waiting for Kubernetes master to be ready')
 
 
 @when_not('deployer.installed')
@@ -70,7 +80,9 @@ def install_deployer():
     set_flag('deployer.installed')
 
 
-@when('endpoint.kubernetes-deployer.available', 'kube-host.available')
+@when('endpoint.kubernetes-deployer.available',
+      'kube-host.available',
+      'kubernetes.ready')
 def new_resource_request(dep, kube):
     if not is_leader():
         return
@@ -114,9 +126,9 @@ def new_resource_request(dep, kube):
 """
 CLEANUP STATES
 """
-@when('kube-host.available')
+@when('kubernetes.ready')
 @when_not('endpoint.kubernetes-deployer.available')
-def call_cleanup(kube):
+def call_cleanup():
     cleanup()
 
 
@@ -246,3 +258,41 @@ def resource_name_duplicate(resource, app):
     if owner and owner != app:
         return True
     return False
+
+
+# Using master_services_down and all_kube_system_pods_running
+# until a subordinate interface is available
+def master_services_down():
+    """Ensure master services are up and running.
+    Return: list of failing services"""
+    services = ['kube-apiserver',
+                'kube-controller-manager',
+                'kube-scheduler']
+    failing_services = []
+    for service in services:
+        daemon = 'snap.{}.daemon'.format(service)
+        if not host.service_running(daemon):
+            failing_services.append(service)
+    return failing_services
+
+
+def all_kube_system_pods_running():
+    ''' Check pod status in the kube-system namespace. Returns True if all
+    pods are running, False otherwise. '''
+    cmd = ['kubectl', 'get', 'po', '-n', 'kube-system', '-o', 'json']
+
+    try:
+        output = check_output(cmd).decode('utf-8')
+    except CalledProcessError:
+        hookenv.log('failed to get kube-system pod status')
+        return False
+
+    result = json.loads(output)
+    for pod in result['items']:
+        status = pod['status']['phase']
+        # Evicted nodes should re-spawn
+        if status != 'Running' and \
+           pod['status'].get('reason', '') != 'Evicted':
+            return False
+
+    return True
