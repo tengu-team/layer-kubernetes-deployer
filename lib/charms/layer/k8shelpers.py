@@ -66,6 +66,32 @@ def get_resource_by_file(path):
     except CalledProcessError:
         return None
 
+
+def get_resource_by_name_type(name, namespace, type):
+    """
+    Return detailed info about a resource.
+
+    Args:
+        name (str): name of the resource
+        namespace(str): namespace to look in
+        type(str): resource type
+    Returns:
+        resource (dict) or None if not found
+    """
+    try:
+        resource = check_output(['kubectl',
+                                 'get',
+                                 type,
+                                 name,
+                                 '-n',
+                                 namespace,
+                                 '-o',
+                                 'json']).decode('utf-8')
+        return json.loads(resource)
+    except CalledProcessError:
+        return None
+
+
 def delete_resources_by_label(namespace, resources, label):  # resources is type list !
     try:
         check_call(['kubectl',
