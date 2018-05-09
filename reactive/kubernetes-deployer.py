@@ -19,8 +19,14 @@ from charms.reactive import (
     when_any,
 )
 from charms.reactive.relations import endpoint_from_flag
-from charmhelpers.core.hookenv import log, is_leader, status_set
+from charmhelpers.core.hookenv import (
+    log,
+    is_leader,
+    status_set,
+    charm_dir,
+)
 from charmhelpers.core import unitdata, hookenv, host
+from jujubigdata import utils
 from charms.layer.resourcefactory import ResourceFactory
 from charms.layer.k8shelpers import (
     delete_resources_by_label,
@@ -55,6 +61,10 @@ def check_master_ready(kube):
 
 @when_not('deployer.installed')
 def install_deployer():
+    # Create user and configuration dir
+    distconfig = utils.DistConfig(filename=charm_dir() + '/files/setup.yaml')
+    distconfig.add_users()
+    distconfig.add_dirs()
     # General deployer options
     deployers_path = '/home/kubedeployer/.config/kubedeployers'
     deployer_path = deployers_path + '/' + os.environ['JUJU_UNIT_NAME'].replace('/', '-')

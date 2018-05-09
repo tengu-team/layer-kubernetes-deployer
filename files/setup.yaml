@@ -1,0 +1,11 @@
+groups:
+  - 'kubedeployer'
+users:
+  kubedeployer:
+    groups: ['kubedeployer']
+dirs:
+  deployers:
+    path: '/home/kubedeployer/.config/kubedeployers'
+    perms: 0755
+    owner: 'kubedeployer'
+    group: 'kubedeployer'
