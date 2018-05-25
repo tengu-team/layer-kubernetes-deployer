@@ -1,4 +1,5 @@
 includes: ['layer:basic',
+           'layer:leadership',
            'interface:kubernetes-deployer',
            'interface:http']
 repo: git@github.com:tengu-team/layer-kubernetes-deployer.git

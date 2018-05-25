@@ -21,7 +21,6 @@ from charms.reactive import (
 from charms.reactive.relations import endpoint_from_flag
 from charmhelpers.core.hookenv import (
     log,
-    is_leader,
     status_set,
     charm_dir,
 )
@@ -92,10 +91,9 @@ def install_deployer():
 
 @when('endpoint.kubernetes-deployer.available',
       'kube-host.available',
-      'kubernetes.ready')
+      'kubernetes.ready',
+      'leadership.is_leader')
 def new_resource_request(dep, kube):
-    if not is_leader():
-        return
     configure_namespace()
     requests = dep.get_resource_requests()
     clean_deployer_config(['resources'])
@@ -136,18 +134,18 @@ def new_resource_request(dep, kube):
 """
 CLEANUP STATES
 """
-@when('kubernetes.ready')
+@when('kubernetes.ready',
+      'leadership.is_leader')
 @when_not('endpoint.kubernetes-deployer.available')
 def call_cleanup():
     cleanup()
 
 
-@when_any('resources.created')
+@when_any('resources.created',
+          'leadership.is_leader')
 def cleanup():
     # Iterate over all resources with label from this deployer
     # Remove all which are not needed anymore
-    if not is_leader():
-        return
     needed_apps = unitdata.kv().get('used_apps', [])
     all_apps = get_label_values_per_deployer(config.get('namespace').rstrip(),
                                              unitdata.kv().get('juju_app_selector'),
@@ -181,10 +179,9 @@ def clean_deployer_configs():
     shutil.rmtree(unitdata.kv().get('deployer_path'))
 
 
-@when('deployer.installed')
+@when('deployer.installed',
+      'leadership.is_leader')
 def create_policies():
-    if not is_leader():
-        return
     configure_namespace()
     request = {
         'namespace': config['namespace'].rstrip(''),
