@@ -33,6 +33,7 @@ from charms.layer.k8shelpers import (
     add_label_to_resource,
     get_worker_node_ips,
     resource_owner,
+    get_resource_by_file,
 )
 
 
@@ -237,22 +238,19 @@ def check_predefined_resources():
     
     Returns:
         {
-            'juju_unit_name': {...},
+            'uuid': {...},
             ...
         }
     """
     result = {}
     path = unitdata.kv().get('deployer_path') + '/resources'
     for file in os.listdir(path):
-        juju_unit_name = file.rsplit('-', 1)[0]
-        if juju_unit_name not in result:
-            result[juju_unit_name] = []
-        try:
-            cmd = run(['kubectl', 'get', '-f', path + '/' + file, '-o', 'json'], stdout=PIPE)
-            cmd.check_returncode()
-            result[juju_unit_name].append(json.loads(cmd.stdout.decode('utf-8')))
-        except CalledProcessError:
-            result[juju_unit_name] = False
+        # Resource files have the following naming rule: uuid-resource_id.yaml
+        # We only need the uuid so the requesting charm can identify the resource.
+        uuid = file.rsplit('-', 1)[0]
+        if uuid not in result:
+            result[uuid] = []
+        result[uuid].append(get_resource_by_file("{}/{}", path, file))
     return result
 
 
