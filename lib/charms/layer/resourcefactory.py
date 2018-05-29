@@ -46,10 +46,12 @@ class Resource(object):
 
 class PreparedResource(Resource):
     """request = {
-        'name': name of the juju unit requesting the resource,
+        'uuid': uuid of the juju unit requesting the resource,
         'resource': resource info,
         'namespace': namespace where to create resource,
-        'unique_id': an id needed to generate unique file names, MUST be INT
+        'unique_id': an id needed to generate unique file names, MUST be INT,
+        'model_uuid': uuid of the model requesting the resource,
+        'juju_unit': name of the juju unit requesting the resource,
     }
     request contains the full resource file in a dict
     """
@@ -61,12 +63,14 @@ class PreparedResource(Resource):
         self.request['resource']['metadata']['namespace'] = self.request['namespace']
         if 'labels' not in self.request['resource']['metadata']:
             self.request['resource']['metadata']['labels'] = {}
-        self.request['resource']['metadata']['labels'][self.juju_app_selector] = self.request['name']
+        self.request['resource']['metadata']['labels'][self.juju_app_selector] = self.request['uuid']
         self.request['resource']['metadata']['labels'][self.deployer_selector] = self.deployer_name
+        self.request['resource']['metadata']['labels']['model_uuid'] = self.request['model_uuid']
+        self.request['resource']['metadata']['labels']['juju_unit'] = self.request['juju_unit']
 
         with open(self.deployer_path +
                   '/resources/' +
-                  self.request['name'] +
+                  self.request['uuid'] +
                   '-' +
                   str(self.request['unique_id']) +
                   '.yaml', 'w+') as f:
@@ -74,9 +78,9 @@ class PreparedResource(Resource):
 
     def delete_resource(self):
         # WARNING This will delete ALL resources requested from the juju unit
-        unit_name = self.request['name'].split('/')  # Filter away the juju unit number
+        unit_name = self.request['uuid']
         for file in os.listdir(self.deployer_path + '/resources'):
-            if re.match('^' + unit_name + '-(\d+)\.yaml'):
+            if re.match('^' + unit_name + '-(\d+)\.yaml', file):
                 k8s.delete_resource_by_file(self.deployer_path + '/resources/' + file)
 
     def name(self):

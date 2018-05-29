@@ -98,10 +98,15 @@ def new_resource_request(dep, kube):
     requests = dep.get_resource_requests()
     clean_deployer_config(['resources'])
     application_names = {}
+    application_juju_info = {}
     for request in requests:
         if not request['uuid']:
             continue
-        application_names[request['uuid'].split('/')[0]] = request['resource']
+        application_names[request['uuid']] = request['resource']
+        application_juju_info[request['uuid']] = {
+            'model_uuid': request['model_uuid'],
+            'juju_unit': request['juju_unit'],
+        }
     used_apps = unitdata.kv().get('used_apps', [])
     unitdata.kv().set('used_apps', list(set(used_apps) | application_names.keys()))
     error_states = {}
@@ -115,10 +120,12 @@ def new_resource_request(dep, kube):
                                                + resource['metadata']['name']}
                 continue
             prepared_request = {
-                'name': app,
+                'uuid': app,
                 'resource': resource,
                 'namespace': config.get('namespace').rstrip(),
                 'unique_id': unique_id,
+                'model_uuid': application_juju_info[app]['model_uuid'],
+                'juju_unit': application_juju_info[app]['juju_unit'],
             }
             unique_id += 1
             pre_resource = ResourceFactory.create_resource('preparedresource', prepared_request)
@@ -141,8 +148,8 @@ def call_cleanup():
     cleanup()
 
 
-@when_any('resources.created',
-          'leadership.is_leader')
+@when('resources.created',
+      'leadership.is_leader')
 def cleanup():
     # Iterate over all resources with label from this deployer
     # Remove all which are not needed anymore
