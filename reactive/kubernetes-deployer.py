@@ -90,7 +90,7 @@ def install_deployer():
     set_flag('deployer.installed')
 
 
-@when('endpoint.kubernetes-deployer.available',
+@when('endpoint.kubernetes-deployer.resources-changed',
       'kube-host.available',
       'kubernetes.ready',
       'leadership.is_leader')
@@ -137,16 +137,12 @@ def new_resource_request(dep, kube):
     dep.send_status(status)
     dep.send_worker_ips(get_worker_node_ips())
     set_flag('resources.created')
+    clear_flag('endpoint.kubernetes-deployer.resources-changed')
 
 
 """
 CLEANUP STATES
 """
-@when('kubernetes.ready',
-      'leadership.is_leader')
-@when_not('endpoint.kubernetes-deployer.available')
-def call_cleanup():
-    cleanup()
 
 
 @when('resources.created',
@@ -188,6 +184,7 @@ def clean_deployer_configs():
 
 
 @when('deployer.installed',
+      'config.changed.isolated',
       'leadership.is_leader')
 def create_policies():
     configure_namespace()
@@ -250,7 +247,7 @@ def check_predefined_resources():
         uuid = file.rsplit('-', 1)[0]
         if uuid not in result:
             result[uuid] = []
-        result[uuid].append(get_resource_by_file("{}/{}", path, file))
+        result[uuid].append(get_resource_by_file("{}/{}".format(path, file)))
     return result
 
 
