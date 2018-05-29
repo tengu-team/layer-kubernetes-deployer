@@ -22,8 +22,28 @@ juju add-relation deployer kubernetes-master
     - `deployer`: name of the deployer who created the resource.
     - `juju_unit`: name of the juju unit application (minus the unit number).
     - `model_uuid`: uuid of the juju model.
+    - `juju_app`: uuid of the juju unit created by the [kubernetes-deployer interface](https://github.com/tengu-team/interface-kubernetes-deployer).
 
+## How it works
 
+The deployer stores all resources locally on the Kubernetes master and uses `kubectl apply` to create all requested resources. The deployer keeps the following dir structure: 
+```
+/home/kubedeployer/.config/kubedeployers
+|   
+|___ namespaces
+|   |   default.yaml
+|
+|___ network-policies
+|
+|___ dev-deployer-0
+|   |   da83235577854e42ae7fceee159d9c15-0.yaml
+|   |   da83235577854e42ae7fceee159d9c15-1.yaml
+|
+|___ live-deployer-0
+    |   f01cd117171748d888d58890ad9143d7-0.yaml
+    |   f01cd117171748d888d58890ad9143d7-1.yaml
+    |   f01cd117171748d888d58890ad9143d7-3.yaml
+```
 
 ## Authors
 
