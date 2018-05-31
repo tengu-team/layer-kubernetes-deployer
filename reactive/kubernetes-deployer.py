@@ -17,6 +17,7 @@ from charms.reactive import (
     hook,
     clear_flag,
     when_any,
+    data_changed,
 )
 from charms.reactive.relations import endpoint_from_flag
 from charmhelpers.core.hookenv import (
@@ -132,13 +133,26 @@ def new_resource_request(dep, kube):
             pre_resource = ResourceFactory.create_resource('preparedresource', prepared_request)
             pre_resource.write_resource_file()
             pre_resource.create_resource()
-    status = check_predefined_resources()
-    status.update(error_states)
-    dep.send_status(status)
-    dep.send_worker_ips(get_worker_node_ips())
+    unitdata.kv().set('error-states', error_states)
     set_flag('resources.created')
     clear_flag('endpoint.kubernetes-deployer.resources-changed')
 
+
+@when('endpoint.kubernetes-deployer.available',
+      'kube-host.available',
+      'kubernetes.ready',
+      'leadership.is_leader')
+@when_not('endpoint.kubernetes-deployer.resources-changed')
+def update_status_info():
+    endpoint = endpoint_from_flag('endpoint.kubernetes-deployer.available')
+    status = check_predefined_resources()
+    error_states = unitdata.kv().get('error-states', {})
+    status.update(error_states)
+    if data_changed('status-info', status):
+        endpoint.send_status(status)
+    worker_ips = get_worker_node_ips()
+    if data_changed('worker-ips', worker_ips):
+        endpoint.send_worker_ips(worker_ips)
 
 """
 CLEANUP STATES
