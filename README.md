@@ -32,6 +32,8 @@ The deployer stores all resources locally on the Kubernetes master and uses `kub
 |   
 |___ namespaces
 |   |   default.yaml
+|   |   dev.yaml
+|   |   live.yaml
 |
 |___ network-policies
 |

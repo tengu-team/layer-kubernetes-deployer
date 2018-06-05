@@ -148,11 +148,12 @@ def update_status_info():
     status = check_predefined_resources()
     error_states = unitdata.kv().get('error-states', {})
     status.update(error_states)
-    if data_changed('status-info', status):
-        endpoint.send_status(status)
     worker_ips = get_worker_node_ips()
-    if data_changed('worker-ips', worker_ips):
+    if (data_changed('status-info', status) 
+        or data_changed('worker-ips', worker_ips)):
+        endpoint.send_status(status)
         endpoint.send_worker_ips(worker_ips)
+        
 
 """
 CLEANUP STATES
