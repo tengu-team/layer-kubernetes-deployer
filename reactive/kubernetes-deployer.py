@@ -99,37 +99,25 @@ def new_resource_request(dep, kube):
     configure_namespace()
     requests = dep.get_resource_requests()
     clean_deployer_config(['resources'])
-    application_names = {}
-    application_juju_info = {}
-    for request in requests:
-        if not request['uuid']:
-            continue
-        application_names[request['uuid']] = request['resource']
-        application_juju_info[request['uuid']] = {
-            'model_uuid': request['model_uuid'],
-            'juju_unit': request['juju_unit'],
-        }
     used_apps = unitdata.kv().get('used_apps', [])
-    unitdata.kv().set('used_apps', list(set(used_apps) | application_names.keys()))
+    unitdata.kv().set('used_apps', list(set(used_apps) | requests.keys()))
     error_states = {}
-    for app, resources in application_names.items():
-        if not resources:
-            continue
-        unique_id = 0
-        for resource in resources:
-            if resource_name_duplicate(resource, app):
-                error_states[app] = {'error': 'Duplicate name for resource: '
+    for uuid in requests:
+        resource_id = 0
+        for resource in requests[uuid]['requests']:
+            if resource_name_duplicate(resource, uuid):
+                error_states[uuid] = {'error': 'Duplicate name for resource: '
                                                + resource['metadata']['name']}
                 continue
             prepared_request = {
-                'uuid': app,
+                'uuid': uuid,
                 'resource': resource,
                 'namespace': config.get('namespace').rstrip(),
-                'unique_id': unique_id,
-                'model_uuid': application_juju_info[app]['model_uuid'],
-                'juju_unit': application_juju_info[app]['juju_unit'],
+                'unique_id': resource_id,
+                'model_uuid': requests[uuid]['model_uuid'],
+                'juju_unit': requests[uuid]['juju_unit'],
             }
-            unique_id += 1
+            resource_id += 1
             pre_resource = ResourceFactory.create_resource('preparedresource', prepared_request)
             pre_resource.write_resource_file()
             pre_resource.create_resource()
