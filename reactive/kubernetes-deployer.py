@@ -98,13 +98,16 @@ def install_deployer():
 def new_resource_request(dep, kube):
     configure_namespace()
     requests = dep.get_resource_requests()
+    # Remove all config files since we are recreating them from the new requests
     clean_deployer_config(['resources'])
-    used_apps = unitdata.kv().get('used_apps', [])
-    unitdata.kv().set('used_apps', list(set(used_apps) | requests.keys()))
+    # Store all uuids in the kv store so we can check later in the cleanup handler 
+    # which are still in use (= still have a relation with the deployer)
+    unitdata.kv().set('used_apps', list(requests.keys()))
     error_states = {}
     for uuid in requests:
         resource_id = 0
         for resource in requests[uuid]['requests']:
+            # Check if there is a naming conflict in the namespace
             if resource_name_duplicate(resource, uuid):
                 error_states[uuid] = {'error': 'Duplicate name for resource: '
                                                + resource['metadata']['name']}
@@ -121,6 +124,7 @@ def new_resource_request(dep, kube):
             pre_resource = ResourceFactory.create_resource('preparedresource', prepared_request)
             pre_resource.write_resource_file()
             pre_resource.create_resource()
+    # Save the error states so update_status_info handler can report them
     unitdata.kv().set('error-states', error_states)
     set_flag('resources.created')
     clear_flag('endpoint.kubernetes-deployer.resources-changed')
@@ -137,6 +141,7 @@ def update_status_info():
     error_states = unitdata.kv().get('error-states', {})
     status.update(error_states)
     worker_ips = get_worker_node_ips()
+    # Only report if the status has changed
     if (data_changed('status-info', status) 
         or data_changed('worker-ips', worker_ips)):
         endpoint.send_status(status)

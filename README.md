@@ -48,7 +48,7 @@ The deployer stores all resources locally on the Kubernetes master and uses `kub
 ```
 
 ## Known issues
-- Resources will not be deleted when a resource requesting charm has multiple units where each unit requests different resources. This scenario occurs when a unit calls [`send_create_request()`](https://github.com/tengu-team/interface-kubernetes-deployer#requires)  twice, once with an actual resource request and the second time with an empty list. The cleanup will trigger after the relation is between de k8s-deployer and requesting charm is removed.
+- Resources will not be deleted when a resource requesting charm has multiple units where each unit requests different resources. This scenario occurs when a unit calls [`send_create_request()`](https://github.com/tengu-team/interface-kubernetes-deployer#requires)  twice, once with an actual resource request and the second time with an empty list. The cleanup will trigger after the relation between the k8s-deployer and requesting charm is removed.
 
 ## Authors
 
