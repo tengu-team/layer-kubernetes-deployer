@@ -14,10 +14,12 @@ def create_resources(path):
     """Create Kubernetes resources based on generated config files.
     """
     try:
-        call(['kubectl', 'apply', '-R', '-f', path])
+        check_call(['kubectl', 'apply', '-R', '-f', path])
     except CalledProcessError as e:
         log('Could not create, modify resources')
         log(e)
+        return False
+    return True
 
 
 def create_resource_by_file(path):

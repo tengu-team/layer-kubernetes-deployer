@@ -87,7 +87,7 @@ class PreparedResource(Resource):
         return self.request['name']
 
     def create_resource(self):
-        k8s.create_resources(self.deployer_path)
+        return k8s.create_resources(self.deployer_path)
 
 
 class NetworkPolicy(Resource):

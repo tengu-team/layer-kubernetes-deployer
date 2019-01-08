@@ -96,6 +96,7 @@ def install_deployer():
       'kubernetes.ready',
       'leadership.is_leader')
 def new_resource_request(dep, kube):
+    status_set('active', 'Processing resource requests')
     configure_namespace()
     requests = dep.get_resource_requests()
     # Remove all config files since we are recreating them from the new requests
@@ -111,6 +112,7 @@ def new_resource_request(dep, kube):
             if resource_name_duplicate(resource, uuid):
                 error_states[uuid] = {'error': 'Duplicate name for resource: '
                                                + resource['metadata']['name']}
+                log('Duplicate name for resource: ' + resource['metadata']['name'])
                 continue
             prepared_request = {
                 'uuid': uuid,
@@ -123,9 +125,14 @@ def new_resource_request(dep, kube):
             resource_id += 1
             pre_resource = ResourceFactory.create_resource('preparedresource', prepared_request)
             pre_resource.write_resource_file()
-            pre_resource.create_resource()
+            if not pre_resource.create_resource():
+                error_states[uuid] = {'error': 'Could not create requested resources.'}
     # Save the error states so update_status_info handler can report them
     unitdata.kv().set('error-states', error_states)
+    if error_states:
+        status_set('active', 'Could not create requested resources, check the deployer log for more details.')
+    else:
+        status_set('active', 'Ready')
     set_flag('resources.created')
     clear_flag('endpoint.kubernetes-deployer.resources-changed')
 
